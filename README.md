@@ -11,7 +11,9 @@ so this package embeds a small static page instead.
 
 ![Layered view with sample data](docs/screenshot-tree.png)
 
-*Both rendered from the page with sample data, not taken from a live site.*
+![Hover details with sample data](docs/screenshot-hover.png)
+
+*All rendered from the page with sample data, not taken from a live site.*
 
 ## Requirements
 
@@ -23,8 +25,8 @@ so this package embeds a small static page instead.
 As the site user:
 
 ```
-mkp add bi_pie-0.2.0.mkp
-mkp enable bi_pie 0.2.0
+mkp add bi_pie-0.3.0.mkp
+mkp enable bi_pie 0.3.0
 ```
 
 The package then provides:
@@ -54,8 +56,24 @@ local/bi_pie/index.html?group=WebApp&title=Web%20applications
 | `depth`   | Layered view: number of rings, default 3 |
 | `max`     | Layered view: most aggregations to load, default 40 |
 
-Clicking a slice or a legend entry narrows the list to that state. Each entry
+Clicking a slice or a legend row narrows the list to that state. Each entry
 links to the aggregation's BI view.
+
+## Hover details and legend
+
+Hovering shows a details box next to the pointer:
+
+- **Slice or legend row:** the state's count and share, and the aggregations in
+  that state with their acknowledged / downtime flags (the first eight, then a
+  count of the rest).
+- **Ring segment (layered view):** the path down to the node, its state and
+  flags, whether it is a rule (with BI pack and rule ID), a host or a service,
+  and how many hosts and services sit below it per state.
+
+Hovering a legend row also fades every slice and segment of another state.
+
+The legend lists each state's aggregation count and share. In the layered view
+it adds a column with the hosts and services per state across all loaded trees.
 
 ## Layered view
 
@@ -71,8 +89,8 @@ finally hosts and services. Children share their parent's angle by the number
 of hosts and services below them, and every segment has the color of its own
 state, so a problem can be followed from the outside in.
 
-Hovering a segment shows its path; clicking it shows the path, the state and,
-for rules, the BI pack and rule ID below the chart.
+Clicking a segment keeps its path, state and, for rules, the BI pack and rule
+ID on display below the chart.
 
 Loading a tree takes one request per aggregation on every refresh. Above `max`
 aggregations the page shows the flat pie and says so, instead of drawing a

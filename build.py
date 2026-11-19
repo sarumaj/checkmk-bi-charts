@@ -24,7 +24,7 @@ ROOT = Path(__file__).parent
 SRC = ROOT / "src"
 
 NAME = "bi_pie"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # Part name -> files, relative to the part's directory in the site:
 #   web  ~/local/share/check_mk/web

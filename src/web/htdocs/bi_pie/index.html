@@ -18,6 +18,9 @@
     depth=<rings>               tree view: number of rings, default 3
     max=<count>                 tree view: most aggregations to load, default 40
 
+  Hovering a slice, a ring segment or a legend row shows its details; hovering
+  a legend row also fades everything of another state.
+
   The aggregation states come from the REST API. The tree view additionally
   loads each aggregation's full tree from ajax_fetch_aggregation_data.py, the
   GUI endpoint behind Checkmk's own BI visualization, because the REST API only
@@ -29,8 +32,8 @@
 <meta charset="utf-8">
 <title>BI aggregation states</title>
 <style>
-  :root { --fg: #e8e8e8; --muted: #9aa3ad; --ring: #2c3844; --gap: #1e262e; }
-  body.light { --fg: #1e262e; --muted: #5b6770; --ring: #dfe3e8; --gap: #ffffff; }
+  :root { --fg: #e8e8e8; --muted: #9aa3ad; --ring: #2c3844; --gap: #1e262e; --tip-bg: #161c22; }
+  body.light { --fg: #1e262e; --muted: #5b6770; --ring: #dfe3e8; --gap: #ffffff; --tip-bg: #ffffff; }
   html, body { margin: 0; height: 100%; background: transparent; }
   body { color: var(--fg); font: 13px/1.4 "Lato", "Helvetica Neue", Arial, sans-serif;
          display: flex; flex-direction: column; padding: 8px; box-sizing: border-box; }
@@ -51,11 +54,26 @@
   path.seg:hover, path.seg.active { opacity: .75; }
   #detail { margin-top: 6px; min-height: 1.4em; }
   #detail .flag { color: var(--muted); font-size: 11px; }
-  #legend { list-style: none; margin: 0; padding: 0; }
-  #legend li { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 1px 0; }
-  #legend li.active { font-weight: 700; }
-  #legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-  #legend .n { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; }
+  #legend { border-collapse: collapse; }
+  #legend th { font-weight: 400; font-size: 11px; color: var(--muted); text-align: right;
+               padding: 0 0 2px 14px; }
+  #legend td { padding: 1px 0; }
+  #legend tbody tr { cursor: pointer; }
+  #legend tr.active { font-weight: 700; }
+  #legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block;
+              margin-right: 6px; }
+  #legend td.n { text-align: right; padding-left: 14px; font-variant-numeric: tabular-nums; }
+  #legend td.pct { color: var(--muted); }
+  /* While a legend row is hovered, everything of another state fades. */
+  #slices.dim > :not(.hl) { opacity: .2; }
+  #tip { position: fixed; z-index: 10; pointer-events: none; max-width: min(320px, 90vw);
+         background: var(--tip-bg); color: var(--fg); border: 1px solid var(--ring);
+         border-radius: 4px; padding: 6px 8px; font-size: 12px;
+         box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
+  #tip .head { font-weight: 700; }
+  #tip .path, #tip .more { color: var(--muted); }
+  #tip ul { list-style: none; margin: 4px 0 0; padding: 0; }
+  #tip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 5px; }
   #list { list-style: none; margin: 8px 0 0; padding: 0; overflow: auto; flex: 1 1 auto; }
   #list li { display: flex; gap: 6px; align-items: baseline; padding: 1px 0; }
   #list .badge { font-size: 10px; font-weight: 700; color: #000; border-radius: 2px;
@@ -77,12 +95,13 @@
     <text class="total" x="21" y="22.5" id="total"></text>
     <text class="sub" x="21" y="27" id="sub">aggregations</text>
   </svg>
-  <ul id="legend"></ul>
+  <table id="legend"></table>
 </div>
 <div id="detail"></div>
 <ul id="list"></ul>
 <div id="msg"></div>
 <pre id="debug" hidden></pre>
+<div id="tip" hidden></div>
 
 <script>
 "use strict";
@@ -240,10 +259,105 @@ function toNode(raw) {
     inDowntime: Boolean(core.in_downtime),
     // Rules are inner nodes; leaves are hosts or services.
     rule: raw.rule_id ? raw.rule_id.pack + " / " + raw.rule_id.rule : null,
+    host: core.hostname || null,
+    service: core.service || null,
     children,
     // Angular weight: every host or service counts once.
     leaves: children.length ? children.reduce((sum, c) => sum + c.leaves, 0) : 1,
   };
+}
+
+// Number of hosts and services per state below a node (the node itself if it is one).
+function leafStates(node, counts = new Map()) {
+  if (!node.children.length) counts.set(node.state, (counts.get(node.state) || 0) + 1);
+  for (const child of node.children) leafStates(child, counts);
+  return counts;
+}
+
+function flagsOf(item) {
+  return [item.acknowledged && "acknowledged", item.inDowntime && "in downtime"].filter(Boolean);
+}
+
+// "12 OK, 1 WARN", in the fixed state order.
+function stateSummary(counts) {
+  return STATES.filter((s) => counts.get(s.id)).map((s) => counts.get(s.id) + " " + s.label).join(", ");
+}
+
+// --- hover details ----------------------------------------------------------
+
+// Shows the nodes build() returns next to the pointer while it is over element.
+function hoverTip(element, build) {
+  element.addEventListener("mouseenter", () => {
+    $("tip").replaceChildren(...build());
+    $("tip").hidden = false;
+  });
+  element.addEventListener("mousemove", (event) => {
+    // Keep the box inside the widget: flip to the other side of the pointer
+    // where it would otherwise be cut off.
+    const tip = $("tip"), gap = 12;
+    const x = event.clientX + gap + tip.offsetWidth > innerWidth
+      ? event.clientX - gap - tip.offsetWidth : event.clientX + gap;
+    const y = event.clientY + gap + tip.offsetHeight > innerHeight
+      ? event.clientY - gap - tip.offsetHeight : event.clientY + gap;
+    tip.style.left = Math.max(0, x) + "px";
+    tip.style.top = Math.max(0, y) + "px";
+  });
+  element.addEventListener("mouseleave", () => { $("tip").hidden = true; });
+}
+
+function swatch(color) {
+  const mark = el("i", {});
+  mark.style.background = color;
+  return mark;
+}
+
+// Details of one state: share of the aggregations and their names.
+function stateTip(state, aggrs) {
+  const mine = aggrs.filter((a) => a.state === state.id).sort((a, b) => a.title.localeCompare(b.title));
+  const share = aggrs.length ? (mine.length / aggrs.length * 100).toFixed(1) : "0.0";
+  const shown = mine.slice(0, 8);
+  const nodes = [
+    el("div", { className: "head" }, swatch(state.color),
+      state.label + ": " + mine.length + " of " + aggrs.length + " aggregations (" + share + " %)"),
+    el("ul", {}, ...shown.map((a) => el("li", {}, a.title + " ",
+      el("span", { className: "more", textContent: flagsOf(a).join(", ") })))),
+  ];
+  if (mine.length > shown.length) {
+    nodes.push(el("div", { className: "more", textContent: "and " + (mine.length - shown.length) + " more" }));
+  }
+  if (lastTrees) {
+    const leaves = new Map();
+    for (const a of mine) leafStates(lastTrees.get(a.title), leaves);
+    nodes.push(el("div", { className: "more", textContent: "Hosts and services below: " + stateSummary(leaves) }));
+  }
+  return nodes;
+}
+
+// Details of one tree segment: where it sits, what it is and what is below it.
+function nodeTip(node, path) {
+  const state = STATES.find((s) => s.id === node.state);
+  const kind = node.rule ? "Rule " + node.rule
+    : node.service ? "Service on host " + node.host : "Host";
+  const nodes = [];
+  if (path.length > 1) {
+    nodes.push(el("div", { className: "path", textContent: path.slice(0, -1).join(" \u203a ") }));
+  }
+  nodes.push(el("div", { className: "head" }, swatch(state.color), node.name));
+  nodes.push(el("div", { textContent: [state.label].concat(flagsOf(node)).join(", ") }));
+  nodes.push(el("div", { className: "more", textContent: kind }));
+  if (node.children.length) {
+    nodes.push(el("div", { className: "more",
+      textContent: node.leaves + " hosts and services below: " + stateSummary(leafStates(node)) }));
+  }
+  return nodes;
+}
+
+// Fades every slice and segment that is not of the given state (null: none).
+function highlight(stateId) {
+  $("slices").classList.toggle("dim", stateId !== null);
+  for (const mark of $("slices").children) {
+    mark.classList.toggle("hl", Number(mark.dataset.state) === stateId);
+  }
 }
 
 // Ring segment between two radii and two angles (radians, clockwise from the
@@ -278,9 +392,9 @@ function renderTree(aggrs, trees) {
     seg.setAttribute("fill", state.color);
     seg.setAttribute("fill-rule", "evenodd");
     seg.setAttribute("d", segmentPath(inner + level * width, inner + (level + 1) * width, a0, a1));
-    const tip = document.createElementNS(SVG_NS, "title");
-    tip.textContent = here.join(" \u203a ") + ": " + state.label;
-    seg.append(tip);
+    seg.dataset.state = node.state;
+    seg.setAttribute("aria-label", here.join(" \u203a ") + ": " + state.label);
+    hoverTip(seg, () => nodeTip(node, here));
     seg.addEventListener("click", () => showDetail(seg, node, here));
     slices.append(seg);
     let start = a0;
@@ -319,7 +433,10 @@ function render(aggrs) {
   // which makes dash lengths equal to percentages and handles a 100% slice.
   const slices = $("slices");
   slices.replaceChildren();
+  slices.classList.remove("dim");
   $("detail").replaceChildren();
+  // A refresh replaces the element under the pointer, which would orphan the box.
+  $("tip").hidden = true;
   let offset = 0;
   for (const s of STATES) {
     const n = counts.get(s.id);
@@ -333,9 +450,9 @@ function render(aggrs) {
     c.setAttribute("stroke", s.color);
     c.setAttribute("stroke-dasharray", pct + " " + (100 - pct));
     c.setAttribute("stroke-dashoffset", -offset);
-    const tip = document.createElementNS(SVG_NS, "title");
-    tip.textContent = s.label + ": " + n + " (" + pct.toFixed(1) + " %)";
-    c.append(tip);
+    c.dataset.state = s.id;
+    c.setAttribute("aria-label", s.label + ": " + n + " (" + pct.toFixed(1) + " %)");
+    hoverTip(c, () => stateTip(s, aggrs));
     c.addEventListener("click", () => select(s.id));
     slices.append(c);
     offset += pct;
@@ -347,14 +464,26 @@ function render(aggrs) {
   $("total").setAttribute("y", lastTrees ? 21.4 : 22.5);
   $("sub").setAttribute("y", lastTrees ? 24.2 : 27);
 
-  $("legend").replaceChildren(...STATES.filter((s) => counts.get(s.id) || s.id >= 0 && s.id <= 2).map((s) => {
-    const swatch = el("i", {});
-    swatch.style.background = s.color;
-    const li = el("li", { className: selected === s.id ? "active" : "" },
-      swatch, el("span", { textContent: s.label }), el("span", { className: "n", textContent: counts.get(s.id) }));
-    li.addEventListener("click", () => select(s.id));
-    return li;
-  }));
+  // Legend: aggregations per state with their share and, in the tree view,
+  // the hosts and services per state across all loaded trees.
+  const leaves = new Map();
+  if (lastTrees) for (const tree of lastTrees.values()) leafStates(tree, leaves);
+  const head = el("tr", {}, el("th", {}), el("th", { textContent: "aggr." }), el("th", { textContent: "share" }));
+  if (lastTrees) head.append(el("th", { textContent: "hosts/svc" }));
+  const rows = STATES.filter((s) => counts.get(s.id) || leaves.get(s.id) || s.id >= 0 && s.id <= 2).map((s) => {
+    const share = total ? (counts.get(s.id) / total * 100).toFixed(0) + " %" : "";
+    const row = el("tr", { className: selected === s.id ? "active" : "" },
+      el("td", {}, swatch(s.color), s.label),
+      el("td", { className: "n", textContent: counts.get(s.id) }),
+      el("td", { className: "n pct", textContent: share }));
+    if (lastTrees) row.append(el("td", { className: "n", textContent: leaves.get(s.id) || 0 }));
+    row.addEventListener("click", () => select(s.id));
+    row.addEventListener("mouseenter", () => highlight(s.id));
+    row.addEventListener("mouseleave", () => highlight(null));
+    hoverTip(row, () => stateTip(s, aggrs));
+    return row;
+  });
+  $("legend").replaceChildren(el("thead", {}, head), el("tbody", {}, ...rows));
 
   renderList(aggrs);
 }
