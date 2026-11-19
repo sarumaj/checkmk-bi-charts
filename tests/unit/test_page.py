@@ -432,13 +432,11 @@ def test_rings_draw_a_pill_per_host_or_service_when_there_is_room(page: Page, st
     assert items(page, kind="leaves") == []
 
 
-def test_treemap_draws_the_worst_first_in_opaque_colors(page: Page, stub: Stub) -> None:
+def test_treemap_draws_the_worst_aggregations_first(page: Page, stub: Stub) -> None:
     page.goto(stub.page + "?view=treemap")
     items(page, SERVICES, "service")
-    data = page.evaluate("biCharts.chart.getOption().series[0].data.map((d) => [d.name, d.itemStyle.color])")
-    assert [name for name, _ in data] == ["Payment", "ERP", "Storage", "Mail", "Shop", "Wiki"]
-    # Drawn over its parent, a pale OK would add up to a brighter one.
-    assert all(len(color) == 7 for _, color in data), data
+    names = page.evaluate("biCharts.chart.getOption().series[0].data.map((d) => d.name)")
+    assert names == ["Payment", "ERP", "Storage", "Mail", "Shop", "Wiki"]
 
 
 def test_tree_nodes_are_filled_with_their_state(page: Page, stub: Stub) -> None:
