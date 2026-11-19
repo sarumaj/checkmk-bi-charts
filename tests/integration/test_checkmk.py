@@ -15,7 +15,7 @@ import pytest
 import requests
 from playwright.sync_api import Page, expect
 
-import build
+import build_mkp
 import checkmk_site
 from checkmk_site import AGGREGATION, MONITORED_HOST, SITE, STATE_ENDPOINT, Site
 
@@ -52,7 +52,7 @@ def test_package_is_enabled(site: Site) -> None:
     result = site.run("mkp list")
     assert result.rc == 0, result.stderr
     assert any(
-        build.NAME in line and build.VERSION in line and "Enabled" in line for line in result.stdout.splitlines()
+        build_mkp.NAME in line and build_mkp.VERSION in line and "Enabled" in line for line in result.stdout.splitlines()
     ), result.stdout
 
 

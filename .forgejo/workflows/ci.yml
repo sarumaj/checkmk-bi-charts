@@ -5,8 +5,8 @@
 # - integration: a matrix of real Checkmk sites, one job per version and one for
 #   the update from 2.4 to 2.5, installed from Checkmk's newest patch releases
 #   (tests/integration/packages.py);
-# - release: for a tag (vX.Y.Z, which the release bot pushes; .cz.toml), the MKP
-#   as a release, only when every job above passed.
+# - release: for a tag (vX.Y.Z, which the release bot pushes; pyproject.toml,
+#   tool.commitizen), the MKP as a release, only when every job above passed.
 # Weekly too, so that a new patch release of Checkmk is tested with the package
 # before anyone updates to it. A failed release is run again from the run's page
 # (re-run failed jobs).
@@ -39,13 +39,14 @@ jobs:
         uses: https://github.com/actions/checkout@v7
 
       - name: Install the test tools
-        # The chart library (package-lock.json) goes into the MKP, the tools into a venv.
+        # The chart library (package-lock.json) goes into the MKP; the project, with the
+        # build command build-mkp and the test tools (pyproject.toml), into a venv.
         # The browser's libraries come from Ubuntu's mirrors, which do not always
         # answer (2026-11-19: every integration job of a run failed here): three tries.
         run: &install |
           npm ci --no-audit --no-fund --ignore-scripts
           python3 -m venv .venv
-          .venv/bin/pip install --quiet --disable-pip-version-check -r requirements-test.txt
+          .venv/bin/pip install --quiet --disable-pip-version-check -e '.[test]'
           for try in 1 2 3; do
             .venv/bin/playwright install --with-deps chromium > /tmp/playwright.log 2>&1 && break
             tail -5 /tmp/playwright.log
@@ -73,7 +74,7 @@ jobs:
           junit: /tmp/pytest.xml
 
       - name: Build the MKP
-        run: python3 build.py
+        run: .venv/bin/build-mkp
 
       # Forgejo's fork: GitHub's v4 refuses a server that is not GitHub's.
       - name: Keep the MKP
@@ -147,12 +148,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The tag names the version; build.py writes it into the MKP's name and manifest.
+      # The project alone, for its build command: no test tools.
+      - name: Install the build command
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet --disable-pip-version-check -e .
+
+      # The tag names the version; build-mkp writes pyproject.toml's into the MKP's name
+      # and manifest.
       - name: Check the tag against the package's version
         run: |
-          version=$(python3 -c 'import build; print(build.VERSION)')
+          version=$(.venv/bin/build-mkp --version)
           if [ "$TAG" != "v$version" ]; then
-            echo "::error::$TAG is not the version in build.py ($version)"
+            echo "::error::$TAG is not the version in pyproject.toml ($version)"
             exit 1
           fi
 
@@ -161,7 +169,7 @@ jobs:
 
       - name: Build the MKP
         run: |
-          python3 build.py
+          .venv/bin/build-mkp
           mkdir release && cp dist/*.mkp release/
           (cd release && sha256sum *.mkp > SHA256SUMS)
 

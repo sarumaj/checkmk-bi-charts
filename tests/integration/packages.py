@@ -95,10 +95,11 @@ def check(tested: list[str]) -> list[str]:
     """What keeps the package from covering every version Checkmk maintains: a
     current ("stable") version that is not tested, or one outside the manifest's
     version.min_required and version.usable_until."""
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    import build  # pylint: disable=import-outside-toplevel
+    # The build command's module, also where the project is not installed.
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
+    import build_mkp  # pylint: disable=import-outside-toplevel
 
-    lowest, beyond = build.MANIFEST["version.min_required"], build.MANIFEST["version.usable_until"]
+    lowest, beyond = build_mkp.MANIFEST["version.min_required"], build_mkp.MANIFEST["version.usable_until"]
     problems = []
     for key, release in sorted(_releases().items(), key=lambda item: _number(item[0])):
         if release.get("class") != "stable":

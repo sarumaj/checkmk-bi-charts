@@ -1,0 +1,55 @@
+# The project's tooling: the command that builds the MKP (scripts/build_mkp.py), the
+# tools of the tests, pytest's and the release bot's settings. The MKP itself is what
+# ships; this Python project is never published.
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "checkmk-bi-charts"
+# The MKP's version too (scripts/build_mkp.py reads it from here); the release bot
+# writes it (tool.commitizen below).
+version = "0.1.0"
+description = "Builds and tests the bi_charts MKP: charts of Checkmk BI aggregations for dashboards."
+readme = "README.md"
+license = "GPL-2.0-or-later"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+# The tools of the tests (README.md, Tests), pinned; Renovate updates them.
+test = [
+    "pytest==9.2.0",
+    "pytest-playwright==0.10.0",
+    "playwright==1.65.2",
+    "pytest-testinfra==10.2.2",
+    "requests==2.34.2",
+]
+
+[project.scripts]
+build-mkp = "build_mkp:main"
+
+# The build command is a module of scripts/, not a package: installed editable
+# (pip install -e .), it keeps reading src/ and node_modules/ of the checkout.
+[tool.setuptools]
+package-dir = { "" = "scripts" }
+py-modules = ["build_mkp"]
+
+[tool.pytest.ini_options]
+# A plain "pytest" runs the unit tests. The integration tests start Checkmk in
+# Docker and take minutes, so they run only when named: pytest tests/integration
+testpaths = ["tests/unit"]
+# The build command's module, also where the project is not installed.
+pythonpath = ["scripts"]
+
+# The release bot (release-bot on git.ciepiela.org) tags the releases due from the
+# Conventional Commits since the last tag and writes CHANGELOG.md; cz works locally too.
+# It writes the version into project.version above (the MKP's manifest) and the install
+# commands of README.md; the tag then runs CI, whose release job publishes the MKP.
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_provider = "pep621"
+version_files = ["README.md:^mkp "]
+# Below 1.0.0 a breaking change raises the minor version, not the major.
+major_version_zero = true

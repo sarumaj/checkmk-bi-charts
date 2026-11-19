@@ -245,7 +245,7 @@ pass them on. Put the filter into the URL instead.
 ```
 npm ci                             # the chart library, which the MKP ships
 python3 -m venv .venv && . .venv/bin/activate
-pip install -r requirements-test.txt
+pip install -e '.[test]'           # the project, with build-mkp and the test tools
 playwright install chromium        # or: pytest --browser-channel chrome
 
 python3 -m pytest                  # unit tests, a few seconds
@@ -290,12 +290,13 @@ Each integration job builds an image with only its versions
 in the matrix.
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/). The
-release bot tags the releases due from them (`.cz.toml`), writing the version
-into `build.py` and the install commands above. The tag runs the whole
+release bot tags the releases due from them (`tool.commitizen` in
+`pyproject.toml`), writing the version into `pyproject.toml` (the MKP's too) and
+the install commands above. The tag runs the whole
 pipeline, and its `release` job publishes the MKP with its SHA-256 as a release.
 The upload to the [Checkmk Exchange](https://exchange.checkmk.com/) stays by
 hand: it has no API, and Checkmk reviews every version. Renovate keeps the test
-tools in `requirements-test.txt` and ECharts in `package-lock.json` up to date.
+tools in `pyproject.toml` and ECharts in `package-lock.json` up to date.
 
 ## Verification status
 
@@ -320,8 +321,14 @@ a site with the package from 2.4 to 2.5.
 
 ```
 npm ci               # ECharts, in the version package-lock.json pins
-./build.py           # writes dist/bi_charts-<version>.mkp, no Checkmk site needed
+pip install -e .     # the project: the command build-mkp (scripts/build_mkp.py)
+build-mkp            # writes dist/bi_charts-<version>.mkp, no Checkmk site needed
 ```
+
+`python3 scripts/build_mkp.py` does the same without installing the project.
+The project is installed editable, so that `build-mkp` reads `src/` and
+`node_modules/` of the checkout. The version is `project.version` in
+`pyproject.toml`; `build-mkp --version` prints it.
 
 The build is reproducible: identical sources give a byte-identical archive.
 
