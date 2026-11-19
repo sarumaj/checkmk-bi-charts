@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file. The release bot
 writes each version's section from the commits (Conventional Commits) and the hand-written
 Unreleased section.
 
+## 0.2.0 - 2026-11-19
+
+### Added
+
+- **view:** sankey, problems only, patterns, change marks; clearer rings, treemap and tree
+
+### Fixed
+
+- **view:** treemap with its layered fills again, the BI order below the aggregations
+
 ## 0.1.0 - 2026-11-19
 
 ### Added
