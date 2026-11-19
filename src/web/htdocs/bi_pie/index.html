@@ -11,7 +11,8 @@
     name=<aggregation title>    repeatable, filters by aggregation title
     title=<text>                heading above the chart
     refresh=<seconds>           reload interval, default 60, 0 disables
-    theme=dark|light            default dark
+    theme=dark|light            default: the Checkmk theme of the embedding
+                                page, dark when opened on its own
     list=0                      hide the list of non-OK aggregations
     debug=1                     dump the raw REST response
     view=tree                   layered view: one ring per level of the BI tree
@@ -145,11 +146,41 @@ function positiveInt(name, fallback) {
   return value;
 }
 
-if (params.get("theme") === "light") document.body.classList.add("light");
+if (theme() === "light") document.body.classList.add("light");
 if (treeView) document.body.classList.add("tree");
 if (params.get("title")) {
   $("title").textContent = params.get("title");
   $("title").hidden = false;
+}
+
+// Explicit theme parameter, else the theme of the embedding Checkmk page, which
+// marks its <body> with data-theme (for example "modern-dark" or "facelift").
+function theme() {
+  const explicit = params.get("theme");
+  if (explicit === "dark" || explicit === "light") return explicit;
+  if (explicit !== null) {
+    message("Parameter theme must be dark or light.", true);
+    throw new Error("invalid parameter theme");
+  }
+  // Same origin when embedded in Checkmk; any other parent is not readable.
+  let parentTheme;
+  try {
+    parentTheme = window.parent.document.body.dataset.theme;
+  } catch (err) {
+    parentTheme = undefined;
+  }
+  return parentTheme && !parentTheme.includes("dark") ? "light" : "dark";
+}
+
+// Shows an error and removes the chart, so that outdated data cannot be
+// mistaken for the current state.
+function fail(text) {
+  lastAggrs = [];
+  lastTrees = null;
+  for (const id of ["slices", "legend", "list", "detail"]) $(id).replaceChildren();
+  $("total").textContent = "?";
+  $("tip").hidden = true;
+  message(text, true);
 }
 
 function message(text, isError) {
@@ -179,7 +210,7 @@ async function load() {
     }
     data = await resp.json();
   } catch (err) {
-    message(String(err.message || err), true);
+    fail(String(err.message || err));
     return;
   }
 
@@ -207,7 +238,7 @@ async function load() {
     try {
       trees = await loadTrees(aggrs.map((a) => a.title));
     } catch (err) {
-      message("Loading the aggregation trees failed: " + String(err.message || err), true);
+      fail("Loading the aggregation trees failed: " + String(err.message || err));
       return;
     }
   }

@@ -1,0 +1,38 @@
+# Unit tests on every push; the integration tests start real Checkmk sites in
+# Docker, which GitHub's Ubuntu runners provide.
+name: test
+
+on: [push, pull_request]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest pytest-playwright pytest-testinfra requests
+      - run: playwright install --with-deps chromium
+      - run: python -m pytest
+      - run: ./build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mkp
+          path: dist/*.mkp
+
+  integration:
+    needs: unit
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [test_checkmk.py, test_update.py]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest pytest-playwright pytest-testinfra requests
+      - run: playwright install --with-deps chromium
+      - run: python -m pytest tests/integration/${{ matrix.suite }}

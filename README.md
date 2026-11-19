@@ -18,15 +18,16 @@ so this package embeds a small static page instead.
 ## Requirements
 
 - Checkmk 2.4.0 or 2.5.0, any edition
-- Viewers need access to BI and the permission to see packaged dashboards
+- Viewers need access to BI. The shipped dashboard is a packaged one; with
+  Checkmk's default permissions every role may see it.
 
 ## Install
 
 As the site user:
 
 ```
-mkp add bi_pie-0.3.0.mkp
-mkp enable bi_pie 0.3.0
+mkp add bi_pie-0.4.0.mkp
+mkp enable bi_pie 0.4.0
 ```
 
 The package then provides:
@@ -49,7 +50,7 @@ local/bi_pie/index.html?group=WebApp&title=Web%20applications
 | `name`    | Aggregation title to include, repeatable |
 | `title`   | Heading above the chart |
 | `refresh` | Reload interval in seconds, default 60, `0` disables |
-| `theme`   | `dark` (default) or `light` |
+| `theme`   | `dark` or `light`; default: the Checkmk theme of the embedding page |
 | `list=0`  | Hide the list of non-OK aggregations |
 | `debug=1` | Show the raw REST API response |
 | `view=tree` | Layered view, see below |
@@ -118,33 +119,68 @@ One package covers both versions because it avoids version-specific code:
 Dashboard filters do not reach the page, because the embed element does not
 pass them on. Put the filter into the URL instead.
 
-## Status
+## Known limitations
 
-Verified without a Checkmk site:
+- **Duplicate titles:** Checkmk's state endpoint keys aggregations by title, so
+  two aggregations with the same title count as one.
+- **Ring proportions:** the innermost ring gives every aggregation the same
+  angle, outer rings divide by hosts and services. Segment sizes are therefore
+  not comparable across rings.
+- **Load:** every open widget asks once per refresh, and each request makes
+  Checkmk compute all matching aggregations; the layered view adds one request
+  per aggregation. Raise `refresh` or narrow the filter on large setups.
+- **Internals:** the tree endpoint, the packaged dashboard format and the local
+  htdocs path are not public interfaces. `version.usable_until` is therefore
+  set to 2.6.0; they were only checked for 2.4 and 2.5.
+- **Touch devices:** the hover details need a pointer.
+- When a request fails, the page shows the error and removes the chart, so that
+  outdated data is never mistaken for the current state.
 
-- the archive is accepted by Checkmk's own MKP manifest parser (2.5 source)
-- both views render correctly against mocked responses
-- the response shapes the page parses match the 2.4 and 2.5 sources
+## Tests
 
-Still to verify on live 2.4 and 2.5 sites:
+```
+pip install pytest pytest-playwright pytest-testinfra requests
+playwright install chromium        # or: pytest --browser-channel chrome
 
-- [ ] `mkp add` / `mkp enable` install both files
-- [ ] the REST endpoint accepts the GUI session cookie
-- [ ] both endpoints answer as the sources suggest (`debug=1` shows the REST one)
-- [ ] the layered view loads at an acceptable speed with real aggregation counts
-- [ ] the packaged dashboard appears, and on 2.5 its widget is converted
-- [ ] the list links open the right BI view
-- [ ] the package survives the update from 2.4 to 2.5
+python3 -m pytest                  # unit tests, a few seconds
+python3 -m pytest tests/integration   # real Checkmk 2.4 and 2.5 in Docker
+```
 
-`version.usable_until` is set to 2.6.0 because the packaged dashboard format,
-the local htdocs path and the tree endpoint are Checkmk internals that were
-only checked against the 2.4 and 2.5 sources.
+| Suite | What it checks | Needs |
+|-------|----------------|-------|
+| `tests/unit/test_package.py` | package sources and the built MKP | nothing |
+| `tests/unit/test_page.py` | the page in a real browser, against a stand-in for the Checkmk endpoints | a browser |
+| `tests/integration/test_checkmk.py` | install, both endpoints with a session cookie, the dashboard and the page in a browser, on 2.4 and on 2.5 | Docker |
+| `tests/integration/test_update.py` | the same site updated from 2.4 to 2.5 | Docker |
 
-## Build and test
+`.github/workflows/test.yml` runs all of it on every push; GitHub's runners
+provide Docker, so pushing the repository is the quickest way to get the
+integration tests run.
+
+The integration tests pull the official images (about 1 GB each) and take a few
+minutes per version. Other images can be set with `BI_PIE_IMAGE_2_4` and
+`BI_PIE_IMAGE_2_5`.
+
+## Verification status
+
+Checked against the Checkmk 2.4 and 2.5 sources:
+
+- session cookies are a documented authentication scheme of the REST API
+- both endpoints return the fields the page reads
+- both versions serve the local htdocs directory and load packaged dashboards
+  from the same directory; 2.5 converts the 2.4 dashboard format when loading
+- the archive is accepted by Checkmk's own MKP manifest parser (2.5)
+
+Checked by the unit tests: the page's behavior in a browser, against a stand-in
+that answers like those sources.
+
+**Not yet run: the integration tests.** Until they pass on your machine,
+nothing here has been exercised on a real Checkmk site.
+
+## Build
 
 ```
 ./build.py           # writes dist/bi_pie-<version>.mkp, no Checkmk site needed
-python3 -m pytest
 ```
 
 The build is reproducible: identical sources give a byte-identical archive.
