@@ -1,9 +1,9 @@
 # bi_charts: charts of Checkmk BI aggregations
 
 A dashboard element with charts of Checkmk BI aggregations: their states as a
-pie or as tiles, the BI trees as rings, a treemap or a tree of nodes, the states
-per group as donuts or bars, and the hosts and services that drag the most
-aggregations down, with a list of the aggregations that are not OK.
+pie or as tiles, the BI trees as rings, a treemap, a tree of nodes or flows,
+the states per group as donuts or bars, and the hosts and services that drag
+the most aggregations down, with a list of the aggregations that are not OK.
 Checkmk has no such charts for BI and no way to add custom widget types in 2.5,
 so this package embeds a static page instead. It draws with
 [Apache ECharts](https://echarts.apache.org/), which the package includes.
@@ -14,7 +14,9 @@ so this package embeds a static page instead. It draws with
 
 ![The treemap with sample data](docs/screenshot-treemap.png)
 
-![The tree with sample data](docs/screenshot-tree.png)
+![The tree, problems only, with sample data](docs/screenshot-tree.png)
+
+![The flows, problems only, with sample data](docs/screenshot-sankey.png)
 
 ![Donuts and bars per group with sample data](docs/screenshot-groups.png)
 
@@ -64,11 +66,12 @@ local/bi_charts/index.html?view=bars&group=WebApp&group=Storage&group=Network
 
 | Parameter | Meaning |
 |-----------|---------|
-| `view` | `pie` (default), `rings`, `treemap`, `tree`, `groups`, `bars`, `tiles` or `impact`, see below |
+| `view` | `pie` (default), `rings`, `treemap`, `tree`, `groups`, `bars`, `tiles`, `impact` or `sankey`, see below |
 | `group` | BI aggregation group to include, repeatable; the groups of `groups` and `bars` |
 | `name` | Aggregation title to include, repeatable |
 | `by` | `groups`, `bars`: `group` (default when `group` is given) or `pack` (BI pack, otherwise) |
-| `depth` | `rings`, `treemap`, `tree`: levels of rules shown, default 3 |
+| `depth` | `rings`, `treemap`, `tree`, `sankey`: levels of rules shown, default 3 |
+| `problems=1` | `rings`, `treemap`, `tree`, `sankey`: only the paths down to what is not OK |
 | `max` | Views of the trees: most aggregations to load, default 40 |
 | `top` | `impact`: most hosts and services shown, default 15 |
 | `title` | Heading above the chart |
@@ -76,6 +79,7 @@ local/bi_charts/index.html?view=bars&group=WebApp&group=Storage&group=Network
 | `theme` | `dark` or `light`; default: the Checkmk theme of the embedding page |
 | `colors` | Other state colors, e.g. `ok:2e7d32,crit:c62828` (`ok`, `warn`, `crit`, `unknown`, `pending`) |
 | `muted=0` | OK in full color; by default it is paler than the problem states |
+| `patterns=1` | A pattern per problem state besides its color: stripes for WARN and CRIT (each its own way), dots for UNKNOWN |
 | `labels=0` | No names on the chart |
 | `legend=0` | Hide the legend |
 | `list=0` | Hide the list of non-OK aggregations |
@@ -98,6 +102,7 @@ list links to the aggregation's BI view.
 | `bars` | One stacked bar per group, a segment per state | Comparing groups by the number of aggregations |
 | `tiles` | One hexagon per aggregation, the worst first, its name inside | Many aggregations at a glance, on a wall screen |
 | `impact` | One bar per host or service that is not OK, as long as the aggregations it is part of, a segment per state of those | What to fix first |
+| `sankey` | The BI trees as flows from the aggregations through their rules to their hosts; a host shared by several aggregations is one node | Seeing what aggregations share |
 
 **Rings:** the innermost ring holds the aggregations, in the same order as the
 pie. Each further ring, up to `depth`, is the next level of rules: the rules
@@ -109,7 +114,35 @@ early. A segment wide enough carries its name: straight along the radius in a
 narrow segment, bent along the ring in a wide one, and never upside down. A
 name is left out where it would be cut to fewer than eight characters (six when
 bent), so how many names show depends on the element's size. Hovering a segment keeps its path to the aggregation in full
-color.
+color. Where the band has too little room (less than six pixels a pill), the
+hosts and services next to each other below the same rule that share a state
+are one pill, and its details name them. A rule's hosts and services that sit
+higher up than the deepest ring leave its outer rings empty.
+
+**Names in the trees:** a rule named after its parent plus a word (*Web Shop
+Frontend* below *Web Shop*) shows only that word in the rings, the treemap, the
+tree and the flows; the details give the whole name. The treemap and the flows
+put the worst aggregations first, as the tiles do.
+
+**Problems only (`problems=1`):** the views of the trees leave out what is OK
+throughout and keep the paths down to every host or service that is not OK,
+also in an aggregation that is OK itself (a rule that tolerates a failed
+member). Below the chart the page says how many aggregations it left out. The
+details of a node still count all the hosts and services below it.
+
+**Sankey:** a column of aggregations, one per level of rules up to `depth`, and
+the hosts last. Each host or service flows from the rule above it to its host,
+so a host's node is as high as its services in all the aggregations shown, and
+a host in several aggregations (a core switch, a storage system) gathers flows
+from all of them. A flow has the color of the worst state in it. Rules below
+`depth` are left out; their hosts hang from the rule above. Many aggregations
+make a long column of hosts: narrow the filter or use `problems=1`.
+
+**Changes:** an aggregation whose state changed while the page is open is
+marked for ten minutes: in bold with *since* and the time in the list (lit up
+once when it happens), outlined among the tiles, and with the time in its
+details. The page remembers nothing between visits, so the first load marks
+nothing.
 
 **Tiles:** need only the states, not the trees, so they work for any number
 of aggregations. A tile also says when its aggregation is acknowledged or in
@@ -129,25 +162,30 @@ aggregation belongs to, so `by=group` asks once per `group` given, and
 `by=pack` groups by the BI pack of each aggregation's top rule, which needs the
 trees (as the views of the trees, up to `max`).
 
-Loading the trees takes one request per aggregation on every refresh. Above
-`max` aggregations the page shows the pie and says so, instead of drawing a
-partial set of trees.
+Loading the trees takes one request per aggregation. A refresh loads a tree
+again only when its aggregation's answer from the state endpoint changed (which
+names the nodes that have a problem) or the tree is ten minutes old, so that a
+changed BI configuration shows within ten minutes. Above `max` aggregations the
+page shows the pie and says so, instead of drawing a partial set of trees.
 
 ## Hover details and legend
 
-Hovering shows a details box next to the pointer:
+Hovering, or tapping on a touch screen, shows a details box next to the
+pointer:
 
 - **State (slice, legend row):** the state's count and share, and the
   aggregations in that state with their acknowledged / downtime flags (the
   first eight, then a count of the rest).
-- **Node of a tree (rings, treemap, tree):** the path down to the node, its
-  state and flags, whether it is a rule (with BI pack and rule ID), a host or a
-  service, and how many hosts and services sit below it per state. Clicking it
-  keeps its path on display below the chart.
+- **Node of a tree (rings, treemap, tree, sankey):** the path down to the node,
+  its state and flags, whether it is a rule (with BI pack and rule ID), a host
+  or a service, and how many hosts and services sit below it per state. Clicking
+  it keeps its path on display below the chart.
 - **Group (donut, bar):** the group's aggregations per state.
 - **Tile:** the aggregation's state and flags.
 - **Impact bar:** the host's or service's state, and its aggregations per
   state (the first eight, worst first).
+- **Host of the flows:** its state, its hosts and services per state, the
+  aggregations it is in, and its hosts and services, the worst first.
 
 Hovering a legend row fades everything of another state.
 
@@ -156,7 +194,9 @@ bar. In the views of the trees it adds a column with the hosts and services per
 state across all loaded trees.
 
 OK is drawn paler than the problem states, and small gaps separate the slices
-and segments, so that problems stand out (`muted=0` turns this off).
+and segments, so that problems stand out (`muted=0` turns this off). For screen
+readers the chart's description says the view and the states of the
+aggregations.
 
 ## How it works
 
@@ -189,11 +229,14 @@ pass them on. Put the filter into the URL instead.
   groups by aggregations.
 - **Load:** every open widget asks once per refresh, and each request makes
   Checkmk compute all matching aggregations; the views of the trees add one
-  request per aggregation, `by=group` one per group. Raise `refresh` or narrow the filter on large setups.
+  request per aggregation whose state changed (and per aggregation every ten
+  minutes), `by=group` one per group. Raise `refresh` or narrow the filter on
+  large setups.
 - **Internals:** the tree endpoint, the packaged dashboard format and the local
   htdocs path are not public interfaces. `version.usable_until` is therefore
   set to 2.6.0; they were only checked for 2.4 and 2.5.
-- **Touch devices:** the hover details need a pointer.
+- **Touch devices:** a tap shows the details, and on a state also narrows the
+  list; fading by a legend row needs a pointer.
 - When a request fails, the page shows the error and removes the chart, so that
   outdated data is never mistaken for the current state.
 

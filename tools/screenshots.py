@@ -110,7 +110,8 @@ SHOTS: dict[str, tuple[list[tuple[str, str]], int, str | None]] = {
         None,
     ),
     "screenshot-treemap.png": ([("view=treemap&depth=2", "view=treemap&depth=2&list=0")], 520, None),
-    "screenshot-tree.png": ([("view=tree&depth=2", "view=tree&depth=2&list=0")], 620, None),
+    "screenshot-tree.png": ([("view=tree&depth=4&problems=1", "view=tree&depth=4&problems=1&list=0")], 520, None),
+    "screenshot-sankey.png": ([("view=sankey&problems=1", "view=sankey&problems=1&list=0")], 520, None),
     "screenshot-groups.png": (
         [("view=groups", "view=groups&list=0&" + GROUPS), ("view=bars", "view=bars&list=0&" + GROUPS)],
         420,
