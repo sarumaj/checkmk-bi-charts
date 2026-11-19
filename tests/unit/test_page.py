@@ -10,10 +10,11 @@ state, kind and color, and where ECharts keeps it, which also lets a test show
 an item's tooltip as hovering would.
 """
 
+import re
 from typing import Any
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Browser, Page, expect
 
 from checkmk_stub import Stub
 
@@ -401,6 +402,166 @@ def test_impact_when_everything_is_ok(page: Page, stub: Stub) -> None:
     expect(page.locator("#chart")).to_contain_text("All hosts and services are OK")
 
 
+# --- the views of the trees: crowding, order, problems only, flows ----------------------
+
+# 300 more OK services below the aggregation Shop: more than the rings' band has room for.
+CROWD = {"Shop": [(f"web-{i}", "CPU", 0) for i in range(300)]}
+
+
+def test_rings_draw_neighbours_of_one_state_as_one_pill_when_crowded(page: Page, stub: Stub) -> None:
+    stub.extra_leaves = CROWD
+    page.set_viewport_size({"width": 900, "height": 700})
+    page.goto(stub.page + "?view=rings&animation=0")
+    found = items(page, 1, "leaves")
+    paths = [i["path"] for i in found]
+    assert "Shop › 300 hosts and services" in paths
+    # Payment-2's two services are OK alike; Payment-1's are not, so they stay apart.
+    assert "Payment › Payment-2 › 2 hosts and services" in paths
+    assert {"Payment › Payment-1 › Payment-1 CPU", "Payment › Payment-1 › Payment-1 Memory"} <= {
+        i["path"] for i in items(page, kind="service")
+    }
+    show_tip(page, "Shop › 300 hosts and services")
+    for line in ["OK", "web-0 › CPU", "and 292 more"]:
+        expect(page.locator(".tip")).to_contain_text(line)
+
+
+def test_rings_draw_a_pill_per_host_or_service_when_there_is_room(page: Page, stub: Stub) -> None:
+    page.set_viewport_size({"width": 900, "height": 700})
+    page.goto(stub.page + "?view=rings&animation=0")
+    items(page, SERVICES, "service")
+    assert items(page, kind="leaves") == []
+
+
+def test_treemap_draws_the_worst_first_in_opaque_colors(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=treemap")
+    items(page, SERVICES, "service")
+    data = page.evaluate("biCharts.chart.getOption().series[0].data.map((d) => [d.name, d.itemStyle.color])")
+    assert [name for name, _ in data] == ["Payment", "ERP", "Storage", "Mail", "Shop", "Wiki"]
+    # Drawn over its parent, a pale OK would add up to a brighter one.
+    assert all(len(color) == 7 for _, color in data), data
+
+
+def test_tree_nodes_are_filled_with_their_state(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=tree")
+    items(page, SERVICES, "service")
+    assert page.evaluate("biCharts.chart.getOption().series[0].symbol") == "circle"
+
+
+@pytest.mark.parametrize("view", ["rings", "treemap", "tree", "sankey"])
+def test_problems_1_draws_only_the_paths_to_problems(page: Page, stub: Stub, view: str) -> None:
+    page.goto(f"{stub.page}?view={view}&problems=1&depth=5")
+    found = items(page, 3, "aggregation")
+    assert sorted(i["path"] for i in found) == ["ERP", "Payment", "Storage"]
+    expect(page.locator("#msg")).to_have_text("Problems only: 3 aggregations OK throughout left out.")
+    # Of each, its host with the problem; the other host is OK throughout.
+    leaves = [i["path"] for i in items(page) if i["kind"] in ("service", "host")]
+    assert not any("-2" in path for path in leaves), leaves
+    # The tooltip still tells what is below in all.
+    show_tip(page, "Payment")
+    expect(page.locator(".tip")).to_contain_text("4 hosts and services below: 3 OK, 1 CRIT")
+
+
+def test_problems_1_when_everything_is_ok(page: Page, stub: Stub) -> None:
+    stub.aggregations = {"Shop": (0, False, False, "web")}
+    page.goto(stub.page + "?view=rings&problems=1")
+    expect(page.locator("#chart")).to_contain_text("All hosts and services are OK")
+
+
+def test_sankey_joins_what_aggregations_share(page: Page, stub: Stub) -> None:
+    stub.extra_leaves = SHARED
+    page.goto(stub.page + "?view=sankey")
+    found = items(page, 6, "aggregation")
+    kinds = [i["kind"] for i in items(page)]
+    # 6 aggregations, their 12 host rules, the 12 hosts below those and san-1 once.
+    assert (kinds.count("aggregation"), kinds.count("rule"), kinds.count("host")) == (6, 12, 13)
+    # Worst first, as the tiles.
+    assert [i["path"] for i in found][:3] == ["Payment", "ERP", "Storage"]
+    show_tip(page, "san-1")
+    for line in ["san-1", "WARN", "3 hosts and services: 3 WARN", "In 3 aggregations", "Payment › san-1 Latency"]:
+        expect(page.locator(".tip")).to_contain_text(line)
+    links = page.evaluate("biCharts.chart.getOption().series[0].links.length")
+    # Each aggregation to its 2 rules, each rule to its host, san-1 from 3 aggregations.
+    assert links == 12 + 12 + 3
+
+
+def test_sankey_click_on_a_host_shows_it(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=sankey")
+    items(page, 6, "aggregation")
+    item = next(i for i in items(page) if i["path"] == "Payment-1" and i["kind"] == "host")
+    page.evaluate(
+        "([s, d]) => biCharts.chart.dispatchAction({ type: 'showTip', seriesIndex: s, dataIndex: d })",
+        [item["seriesIndex"], item["dataIndex"]],
+    )
+    expect(page.locator(".tip")).to_contain_text("2 hosts and services: 1 OK, 1 CRIT")
+
+
+# --- refreshes, changes, patterns, screen readers, touch ------------------------------
+
+
+def test_refresh_loads_a_tree_again_only_when_its_aggregation_changed(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=rings&refresh=1")
+    items(page, SERVICES, "service")
+    assert stub.tree_requests == 6
+    page.wait_for_timeout(2500)
+    assert stub.tree_requests == 6
+    stub.aggregations["Shop"] = (2, False, False, "web")
+    expect(page.locator("#list li", has_text="Shop")).to_have_count(1)
+    assert stub.tree_requests == 7
+
+
+def test_a_changed_state_is_marked(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=tiles&refresh=1")
+    items(page, 6, "aggregation")
+    # The first load knows no change.
+    expect(page.locator("#list li.changed")).to_have_count(0)
+    stub.aggregations["Shop"] = (2, False, False, "web")
+    # The time as the viewer's browser writes it, e.g. 14:05 or 2:05 PM.
+    expect(page.locator("#list li.changed")).to_have_text(re.compile(r"CRIT\s*Shop\s*since \d\d?:\d\d"))
+    show_tip(page, "Shop")
+    expect(page.locator(".tip")).to_contain_text("Changed at")
+    # Outlined among the tiles.
+    assert page.evaluate("Array.from(document.querySelectorAll('#chart path[stroke-width=\"3\"]')).length") == 1
+
+
+def test_patterns_1_marks_the_problem_states(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?patterns=1")
+    items(page, 4, "state")
+    decals = page.evaluate(
+        "Object.fromEntries(biCharts.chart.getOption().series[0].data.map((d) => [d.name, Boolean(d.itemStyle.decal)]))"
+    )
+    assert decals == {"OK": False, "WARN": True, "CRIT": True, "UNKNOWN": True}
+    page.goto(stub.page)
+    items(page, 4, "state")
+    assert not page.evaluate("biCharts.chart.getOption().series[0].data.some((d) => d.itemStyle.decal)")
+
+
+def test_screen_readers_get_a_description(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=tiles&title=Shop%20floor")
+    items(page, 6, "aggregation")
+    expect(page.locator("#chart")).to_have_attribute(
+        "aria-label", re.compile("Shop floor, tiles: 6 aggregations, 3 OK, 1 WARN, 1 CRIT, 1 UNKNOWN")
+    )
+
+
+def test_a_tap_shows_the_details(browser: Browser, stub: Stub) -> None:
+    context = browser.new_context(has_touch=True, viewport={"width": 900, "height": 700})
+    page = context.new_page()
+    page.goto(stub.page + "?view=tiles&animation=0")
+    items(page, 6, "aggregation")
+    item = next(i for i in items(page) if i["path"] == "Payment")
+    x, y = page.evaluate(
+        """([s, d]) => {
+            const [x, y] = biCharts.chart.getOption().series[s].data[d].value;
+            const box = document.getElementById("chart").getBoundingClientRect();
+            return [box.left + x, box.top + y];
+        }""",
+        [item["seriesIndex"], item["dataIndex"]],
+    )
+    page.touchscreen.tap(x, y)
+    expect(page.locator(".tip")).to_contain_text("CRIT, acknowledged")
+    context.close()
+
+
 # --- parameters, errors, theme ---------------------------------------------------------
 
 
@@ -411,8 +572,8 @@ def test_impact_when_everything_is_ok(page: Page, stub: Stub) -> None:
         pytest.param("?max=many", "Parameter max must be a positive integer.", id="max not a number"),
         pytest.param("?theme=blue", "Parameter theme must be dark or light.", id="unknown theme"),
         pytest.param(
-            "?view=sankey",
-            "Parameter view must be one of pie, rings, treemap, tree, groups, bars, tiles, impact.",
+            "?view=flow",
+            "Parameter view must be one of pie, rings, treemap, tree, groups, bars, tiles, impact, sankey.",
             id="unknown view",
         ),
         pytest.param("?top=0", "Parameter top must be a positive integer.", id="top zero"),

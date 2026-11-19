@@ -152,7 +152,7 @@ def test_page_draws_the_pie_in_a_browser(page: Page, site: Site) -> None:
     assert len(_items(page, "state")) == 1
 
 
-@pytest.mark.parametrize("view", ["rings", "treemap", "tree"])
+@pytest.mark.parametrize("view", ["rings", "treemap", "tree", "sankey"])
 def test_page_draws_the_trees_in_a_browser(page: Page, site: Site, view: str) -> None:
     _log_in(page, site)
     page.goto(site.url + f"local/bi_charts/index.html?view={view}&depth=5")

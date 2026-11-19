@@ -19,12 +19,18 @@
                                          worst first
                                 impact:  the hosts and services that are not
                                          OK, by the aggregations they are in
+                                sankey:  the BI trees as flows from the
+                                         aggregations through their rules to
+                                         their hosts
     group=<aggregation group>   repeatable, filters by BI aggregation group; the
                                 groups of the views groups and bars
     name=<aggregation title>    repeatable, filters by aggregation title
     by=group|pack               groups and bars: per aggregation group (default
                                 when group= is given) or per BI pack (otherwise)
-    depth=<levels>              rings, treemap, tree: rule levels shown, default 3
+    depth=<levels>              rings, treemap, tree, sankey: rule levels shown,
+                                default 3
+    problems=1                  rings, treemap, tree, sankey: only the paths down
+                                to what is not OK
     max=<count>                 views of the trees: most aggregations to load,
                                 default 40
     top=<count>                 impact: most hosts and services shown, default 15
@@ -35,21 +41,25 @@
     colors=<state>:<hex>,...    other colors, e.g. colors=ok:2e7d32,crit:c62828
                                 (states ok, warn, crit, unknown, pending)
     muted=0                     OK in full color (default: paler than problems)
+    patterns=1                  a pattern per problem state besides its color
     labels=0                    no names on the chart
     legend=0                    hide the legend
     list=0                      hide the list of non-OK aggregations
     animation=0                 no animation
     debug=1                     dump the raw REST response
 
-  Hovering shows details; clicking a state narrows the list to it, clicking a
-  node of a tree shows its path below the chart; hovering a legend row fades
-  everything of another state.
+  Hovering (or tapping) shows details; clicking a state narrows the list to it,
+  clicking a node of a tree shows its path below the chart; hovering a legend row
+  fades everything of another state. An aggregation whose state changed while the
+  page was open is marked for ten minutes.
 
   The aggregation states come from the REST API. The views of the trees also
   load each aggregation's full tree from ajax_fetch_aggregation_data.py, the GUI
   endpoint behind Checkmk's own BI visualization, because the REST API only
-  reports the nodes that have a problem. Both are called with the viewer's own
-  GUI session, so every user sees only what they are permitted to see.
+  reports the nodes that have a problem. A tree is loaded again only when its
+  aggregation's answer from the REST API changed, or after ten minutes. Both are
+  called with the viewer's own GUI session, so every user sees only what they are
+  permitted to see.
 -->
 <html lang="en">
 <head>
@@ -67,10 +77,10 @@
   /* Round charts are square; the others take the width and a good part of the height. */
   #chart { width: min(45vw, 60vh, 240px); aspect-ratio: 1; }
   body.view-rings #chart { width: min(60vw, 80vh, 440px); }
-  body.view-treemap #stage, body.view-tree #stage, body.view-groups #stage,
-  body.view-bars #stage, body.view-tiles #stage, body.view-impact #stage { flex: 1 1 100%; }
-  body.view-treemap #chart, body.view-tree #chart { width: 100%; aspect-ratio: auto;
-                                                    height: max(240px, 65vh); }
+  body.view-treemap #stage, body.view-tree #stage, body.view-groups #stage, body.view-bars #stage,
+  body.view-tiles #stage, body.view-impact #stage, body.view-sankey #stage { flex: 1 1 100%; }
+  body.view-treemap #chart, body.view-tree #chart,
+  body.view-sankey #chart { width: 100%; aspect-ratio: auto; height: max(240px, 65vh); }
   body.view-groups #chart, body.view-bars #chart, body.view-tiles #chart,
   body.view-impact #chart { width: 100%; aspect-ratio: auto; height: max(200px, 45vh); }
   /* The total in the middle of the round charts. */
@@ -111,6 +121,10 @@
   #list a { color: inherit; text-decoration: none; }
   #list a:hover { text-decoration: underline; }
   #list .flag { color: var(--muted); font-size: 11px; }
+  /* Changed while the page was open: marked, and lit up once when it happened. */
+  #list li.changed a { font-weight: 700; }
+  #list li.changed.new { animation: lit 2s ease-out; }
+  @keyframes lit { from { background: color-mix(in srgb, var(--fg) 25%, transparent); } }
   #msg { color: var(--muted); margin-top: 6px; white-space: pre-wrap; }
   #msg.err { color: #ff6464; }
   pre { font-size: 11px; overflow: auto; }
@@ -143,9 +157,21 @@ const STATES = [
   { id: 3,  key: "unknown", label: "UNKNOWN", color: "#ff8800" },
   { id: -1, key: "pending", label: "PENDING", color: "#8a949e" },
 ];
-const VIEWS = ["pie", "rings", "treemap", "tree", "groups", "bars", "tiles", "impact"];
+const VIEWS = ["pie", "rings", "treemap", "tree", "groups", "bars", "tiles", "impact", "sankey"];
 // The views that need every aggregation's tree.
-const TREE_VIEWS = ["rings", "treemap", "tree", "impact"];
+const TREE_VIEWS = ["rings", "treemap", "tree", "impact", "sankey"];
+// A pattern per problem state (patterns=1), for those who tell the colors apart badly:
+// none on OK, so that the problems stand out the more.
+const DECALS = {
+  1: { symbol: "rect", symbolSize: 1, dashArrayX: [1, 0], dashArrayY: [2, 5], rotation: Math.PI / 4 },
+  2: { symbol: "rect", symbolSize: 1, dashArrayX: [1, 0], dashArrayY: [2, 4], rotation: -Math.PI / 4 },
+  3: { symbol: "circle", symbolSize: 0.8, dashArrayX: [[6, 6], [0, 6, 6, 0]], dashArrayY: [6, 0] },
+  "-1": { symbol: "rect", symbolSize: 1, dashArrayX: [1, 0], dashArrayY: [2, 5], rotation: Math.PI / 2 },
+};
+// How long a tree is reused while its aggregation's answer stays the same, and how
+// long an aggregation whose state changed is marked.
+const TREE_MAX_AGE = 10 * 60 * 1000;
+const CHANGED_FOR = 10 * 60 * 1000;
 
 const params = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -164,6 +190,8 @@ const showList = params.get("list") !== "0";
 const showLegend = params.get("legend") !== "0";
 const showLabels = params.get("labels") !== "0";
 const muted = params.get("muted") !== "0";
+const patterns = params.get("patterns") === "1";
+const problemsOnly = params.get("problems") === "1";
 const animate = params.get("animation") !== "0";
 applyColors();
 
@@ -173,6 +201,9 @@ let scopes = new Map();    // scope key -> the titles of its aggregations, from 
 let faded = null;      // state id a hovered legend row leaves in full color
 let last = null;       // what the last load found: {aggrs, trees, groups}
 let refs = new Map();  // chart item id -> {path, node or state or group}
+const treeCache = new Map();  // aggregation title -> {tree, answer, at}: trees reused across loads
+const seen = new Map();       // aggregation title -> {state, since}: when its state last changed
+const litUp = new Set();      // "<title>@<since>" of the changes the list has lit up already
 
 function fail(text) {
   last = null;
@@ -247,6 +278,31 @@ function fill(id) {
   return alpha === 1 ? color : color + Math.round(alpha * 255).toString(16).padStart(2, "0");
 }
 
+// A state's fill and, with patterns=1, its pattern: for a chart item's itemStyle.
+function paint(id) {
+  const style = { color: fill(id) };
+  if (patterns && DECALS[id]) style.decal = { ...DECALS[id], color: "#00000040" };
+  return style;
+}
+
+// A fill without transparency: the pale OK mixed with the background, for shapes drawn
+// over one another (the treemap's), whose transparent fills would add up.
+function opaque(color) {
+  if (color.length !== 9) return color;
+  const alpha = parseInt(color.slice(7), 16) / 255;
+  const under = css("--gap");
+  const mix = (i) => Math.round(parseInt(color.slice(i, i + 2), 16) * alpha +
+    parseInt(under.slice(i, i + 2), 16) * (1 - alpha)).toString(16).padStart(2, "0");
+  return "#" + mix(1) + mix(3) + mix(5);
+}
+
+// A node's name without its parent's in front, for labels: "Frontend" below "Web Shop"
+// instead of "Web Shop Frontend". The tooltips keep the whole name.
+function shortName(name, parent) {
+  return parent && name.startsWith(parent + " ") && name.length > parent.length + 1
+    ? name.slice(parent.length + 1) : name;
+}
+
 // Explicit theme parameter, else the theme of the embedding Checkmk page, which
 // marks its <body> with data-theme (for example "modern-dark" or "facelift").
 function theme() {
@@ -299,6 +355,9 @@ async function loadStates(groups) {
       state: stateOf(a.state) ? a.state : 3,
       acknowledged: Boolean(a.acknowledged),
       inDowntime: Boolean(a.in_downtime),
+      // The whole answer, which also names the nodes that have a problem: when it
+      // changes, so may the tree.
+      answer: JSON.stringify(a),
     })),
     missingSites: body.missing_sites || [],
     missingAggr: body.missing_aggr || [],
@@ -321,7 +380,7 @@ async function load() {
         " matched. Showing the pie; narrow with group= / name= or raise max=.");
     } else if (needTrees) {
       try {
-        trees = await loadTrees(found.aggrs.map((a) => a.title));
+        trees = await loadTrees(found.aggrs);
       } catch (err) {
         fail("Loading the aggregation trees failed: " + String(err.message || err));
         return;
@@ -347,27 +406,64 @@ async function load() {
     fail(String(err.message || err));
     return;
   }
+  noteChanges(found.aggrs);
   last = { aggrs: found.aggrs, trees, groups };
   render();
 
   if (!found.aggrs.length) notes.push("No aggregations matched.");
+  if (problemsOnly && trees) {
+    const ok = [...trees.values()].filter((tree) => !problemsOf(tree)).length;
+    if (ok) notes.push("Problems only: " + ok + (ok === 1 ? " aggregation" : " aggregations") + " OK throughout left out.");
+  }
   if (found.missingSites.length) notes.push("Missing sites: " + found.missingSites.join(", "));
   if (found.missingAggr.length) notes.push("Missing aggregations: " + found.missingAggr.join(", "));
   message(notes.join("\n"), false);
 }
 
-// Loads the full tree of every aggregation, a few requests at a time.
-async function loadTrees(titles) {
+// The full tree of every aggregation, a few requests at a time. A tree loaded before
+// is used again while its aggregation's answer from the REST API is the same and it
+// is younger than TREE_MAX_AGE (a changed BI configuration shows after that), so that
+// a refresh asks for few trees or none.
+async function loadTrees(aggrs) {
   const trees = new Map();
-  const queue = titles.slice();
+  const now = Date.now();
+  const queue = [];
+  for (const a of aggrs) {
+    const cached = treeCache.get(a.title);
+    if (cached && cached.answer === a.answer && now - cached.at < TREE_MAX_AGE) trees.set(a.title, cached.tree);
+    else queue.push(a);
+  }
   async function worker() {
-    for (let title = queue.shift(); title !== undefined; title = queue.shift()) {
-      trees.set(title, await loadTree(title));
+    for (let a = queue.shift(); a !== undefined; a = queue.shift()) {
+      const tree = await loadTree(a.title);
+      trees.set(a.title, tree);
+      treeCache.set(a.title, { tree, answer: a.answer, at: now });
     }
   }
   await Promise.all(Array.from({ length: Math.min(6, queue.length) }, worker));
-  return trees;
+  for (const title of treeCache.keys()) if (!trees.has(title)) treeCache.delete(title);
+  // In the order of the aggregations, whichever request finished first.
+  return new Map(aggrs.map((a) => [a.title, trees.get(a.title)]));
 }
+
+// Remembers when each aggregation's state changed while the page is open. The first
+// load knows no change; an aggregation that appears later counts as changed.
+function noteChanges(aggrs) {
+  const now = Date.now(), first = seen.size === 0;
+  for (const a of aggrs) {
+    const before = seen.get(a.title);
+    if (!before) seen.set(a.title, { state: a.state, since: first ? null : now });
+    else if (before.state !== a.state) seen.set(a.title, { state: a.state, since: now });
+  }
+}
+
+// When an aggregation's state changed, if that was less than CHANGED_FOR ago.
+function changedAt(title) {
+  const entry = seen.get(title);
+  return entry && entry.since && Date.now() - entry.since < CHANGED_FOR ? entry.since : null;
+}
+
+const clock = (time) => new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 async function loadTree(title) {
   const url = new URL("ajax_fetch_aggregation_data.py", GUI_BASE);
@@ -404,6 +500,22 @@ function toNode(raw) {
   };
 }
 
+// The tree cut down to the paths that lead to something not OK (problems=1), or null
+// when all of it is OK. A copy: the cut nodes keep their whole node as `full`, which the
+// tooltips describe. A problem rule whose children are all OK keeps them, so that it
+// still reads as a rule.
+function problemsOf(node) {
+  if (!node.children.length) return node.state === 0 ? null : node;
+  let children = node.children.map(problemsOf).filter(Boolean);
+  if (!children.length) {
+    if (node.state === 0) return null;
+    children = node.children;
+  }
+  return { ...node, children, full: node.full || node,
+           leaves: children.reduce((sum, c) => sum + c.leaves, 0),
+           ruleLevels: 1 + Math.max(...children.map((c) => c.ruleLevels)) };
+}
+
 // Number of hosts and services per state below a node (the node itself if it is one).
 function leafStates(node, counts = new Map()) {
   if (!node.children.length) counts.set(node.state, (counts.get(node.state) || 0) + 1);
@@ -438,7 +550,8 @@ function stateTip(state, aggrs) {
   const shown = mine.slice(0, 8);
   let html = '<div class="head">' + swatch(state.color) + esc(state.label) + ": " + mine.length + " of " +
     aggrs.length + " aggregations (" + share + " %)</div><ul>" +
-    shown.map((a) => "<li>" + esc(a.title) + ' <span class="more">' + esc(flagsOf(a).join(", ")) +
+    shown.map((a) => "<li>" + esc(a.title) + ' <span class="more">' +
+      esc(flagsOf(a).concat(changedAt(a.title) ? ["since " + clock(changedAt(a.title))] : []).join(", ")) +
       "</span></li>").join("") + "</ul>";
   if (mine.length > shown.length) html += '<div class="more">and ' + (mine.length - shown.length) + " more</div>";
   if (last && last.trees) {
@@ -450,7 +563,8 @@ function stateTip(state, aggrs) {
 }
 
 // Details of one tree node: where it sits, what it is and what is below it.
-function nodeTip(node, path) {
+function nodeTip(shown, path) {
+  const node = shown.full || shown;
   const state = stateOf(node.state);
   const kind = node.rule ? "Rule " + node.rule : node.service ? "Service on host " + node.host : "Host";
   let html = "";
@@ -458,11 +572,18 @@ function nodeTip(node, path) {
   html += '<div class="head">' + swatch(state.color) + esc(node.name) + "</div>";
   html += "<div>" + esc([state.label].concat(flagsOf(node)).join(", ")) + "</div>";
   html += '<div class="more">' + esc(kind) + "</div>";
+  if (path.length === 1) html += changedTip(node.name);
   if (node.children.length) {
     html += '<div class="more">' + node.leaves + " hosts and services below: " +
       esc(stateSummary(leafStates(node))) + "</div>";
   }
   return html;
+}
+
+// Since when an aggregation is in its state, if that changed while the page was open.
+function changedTip(title) {
+  const at = changedAt(title);
+  return at ? '<div class="more">Changed at ' + esc(clock(at)) + "</div>" : "";
 }
 
 // Details of one group: its states.
@@ -522,18 +643,29 @@ function render(chartOnly) {
     ? "pie" : view;
   document.body.classList.toggle("view-pie", shown === "pie");
   for (const v of VIEWS) if (v !== "pie") document.body.classList.toggle("view-" + v, shown === v);
-  $("chart").style.height = heightOf(shown) || "";
+  // problems=1: the trees cut down to their problems, without the aggregations that are
+  // OK throughout.
+  const cut = trees && problemsOnly
+    ? new Map([...trees].map(([title, tree]) => [title, problemsOf(tree)]).filter(([, tree]) => tree)) : trees;
+  const cutAggrs = cut ? aggrs.filter((a) => cut.has(a.title)) : aggrs;
+  $("chart").style.height = heightOf(shown, cutAggrs, cut) || "";
   chart.resize();
+  const ofTrees = (draw) => () => (cutAggrs.length ? draw(cutAggrs, cut) : allOkOption());
   const option = Object.assign(base(), {
     pie: () => pieOption(aggrs),
-    rings: () => ringsOption(aggrs, trees),
-    treemap: () => treemapOption(aggrs, trees),
-    tree: () => treeOption(aggrs, trees),
+    rings: ofTrees(ringsOption),
+    treemap: ofTrees(treemapOption),
+    tree: ofTrees(treeOption),
     groups: () => groupsOption(aggrs, groups),
     bars: () => barsOption(aggrs, groups),
     tiles: () => tilesOption(aggrs),
     impact: () => impactOption(aggrs, trees),
+    sankey: ofTrees(sankeyOption),
   }[shown]());
+  // For screen readers, in place of the shapes: what the chart is about. ECharts writes it
+  // into the chart's aria-label.
+  option.aria = { enabled: true, label: { description: (params.get("title") || "BI aggregation states") + ", " +
+    shown + ": " + aggrs.length + " aggregations, " + stateSummary(countStates(aggrs)) + "." } };
   $("arcs").replaceChildren();
   chart.setOption(option, { notMerge: true });
 
@@ -548,8 +680,9 @@ function render(chartOnly) {
   renderList(aggrs);
 }
 
-// The height the views of many rows need, or null for the stylesheet's.
-function heightOf(shown) {
+// The height the views of many rows need, or null for the stylesheet's; the views of
+// the trees get the aggregations and trees they draw (problems=1 cuts them down).
+function heightOf(shown, cutAggrs, cut) {
   const { aggrs, trees, groups } = last;
   if (shown === "groups") return groupGrid(groups.length).rows * 170 + "px";
   if (shown === "bars") return Math.max(120, groups.length * 34 + 40) + "px";
@@ -560,13 +693,25 @@ function heightOf(shown) {
   }
   if (shown === "impact") return Math.max(120, Math.min(topRows, impactOf(aggrs, trees).length) * 26 + 50) + "px";
   if (shown === "tree") {
-    // A row per node at the unfolded depth, and per host or service above it.
+    // A row per node at the unfolded depth, and per host or service above it: room
+    // for a line of text each.
     const rows = (node, level) => (level === depth || !node.children.length ? 1
       : node.children.reduce((sum, c) => sum + rows(c, level + 1), 0));
-    const count = aggrs.reduce((sum, a) => sum + rows(trees.get(a.title), 1), 0);
-    return Math.max(240, count * 15 + 40) + "px";
+    const count = cutAggrs.reduce((sum, a) => sum + rows(cut.get(a.title), 1), 0);
+    return Math.max(240, count * 20 + 40) + "px";
+  }
+  if (shown === "sankey") {
+    // A line of text per node of the fullest column.
+    const columns = sankeyColumns(cutAggrs, cut);
+    return Math.max(240, Math.max(0, ...columns) * 18 + 40) + "px";
   }
   return null;
+}
+
+// In place of the chart of the trees when problems=1 leaves nothing to draw.
+function allOkOption() {
+  return { title: { text: "All hosts and services are OK", left: "center", top: "middle",
+                    textStyle: { color: css("--muted"), fontSize: 13, fontWeight: 400 } } };
 }
 
 // A name's color on a state's fill: black on the bright problem colors and on OK in
@@ -653,7 +798,7 @@ function pieOption(aggrs) {
         id: ref({ path: [s.label], state: s.id, kind: "state",
                   arc: showLabels ? { text: s.label + " " + counts.get(s.id), color: labelColor(s.id) } : undefined }),
         stateId: s.id,
-        itemStyle: { color: fill(s.id), borderColor: selected === s.id ? css("--fg") : "transparent",
+        itemStyle: { ...paint(s.id), borderColor: selected === s.id ? css("--fg") : "transparent",
                      borderWidth: selected === s.id ? 2 : 0 },
         tip: () => stateTip(s, aggrs),
       })),
@@ -672,16 +817,53 @@ function ringsOption(aggrs, trees) {
   const radius = Math.min($("chart").clientWidth, $("chart").clientHeight) / 2;
   const inner = 0.3, outer = 0.86, step = (outer - inner) / rings;
   const allLeaves = list.reduce((sum, a) => sum + trees.get(a.title).leaves, 0);
+  // Below a rule of an upper ring: in the ring's own background color, which reads as
+  // room left free rather than as a crack through the rings.
   function spacer(child, from) {
     let item = child;
     for (let level = rings; level > from; level--) {
-      item = { name: "", value: child.value, children: [item], itemStyle: { color: "transparent", borderWidth: 0 },
+      item = { name: "", value: child.value, children: [item], itemStyle: { color: css("--ring"), borderWidth: 0 },
                label: { show: false }, emphasis: { disabled: true }, tooltip: { show: false }, cursor: "default" };
     }
     return item;
   }
 
-  function label(node, level) {
+  // A pill narrower than a few pixels is mostly the gap around it: too many hosts and
+  // services for the band. Then neighbours below the same rule that share a state
+  // (and its flags) are one pill, its tooltip naming them.
+  const crowded = 2 * Math.PI * 0.93 * radius / allLeaves < 6;
+  const same = (a, b) => a.state === b.state && a.acknowledged === b.acknowledged && a.inDowntime === b.inDowntime;
+  function runs(children) {
+    const found = [];
+    for (const child of children) {
+      const run = found[found.length - 1];
+      if (crowded && !child.children.length && run && !run[0].children.length && same(run[0], child)) run.push(child);
+      else found.push([child]);
+    }
+    return found;
+  }
+
+  function pill(run, level, path) {
+    if (run.length === 1) {
+      const node = run[0], here = path.concat(node.name);
+      return spacer({ name: node.name, value: 1, id: ref({ path: here, node, kind: node.service ? "service" : "host" }),
+                      itemStyle: paint(node.state), label: { show: false }, tip: () => nodeTip(node, here) }, level);
+    }
+    const first = run[0];
+    const node = { name: run.length + " hosts and services", state: first.state, acknowledged: first.acknowledged,
+                   inDowntime: first.inDowntime, children: [], leaves: run.length };
+    const here = path.concat(node.name);
+    const tip = () => {
+      const shown = run.slice(0, 8).map((n) => "<li>" + esc(n.service && n.host ? n.host + " › " + n.service : n.name) +
+        "</li>");
+      return nodeTip(node, here) + "<ul>" + shown.join("") + "</ul>" +
+        (run.length > shown.length ? '<div class="more">and ' + (run.length - shown.length) + " more</div>" : "");
+    };
+    return spacer({ name: node.name, value: run.length, id: ref({ path: here, node, kind: "leaves" }),
+                    itemStyle: paint(node.state), label: { show: false }, tip }, level);
+  }
+
+  function label(node, level, text) {
     if (!showLabels) return { show: false };
     const r0 = (inner + level * step) * radius, r1 = r0 + step * radius;
     const arc = 2 * Math.PI * node.leaves / allLeaves * (r0 + r1) / 2;
@@ -691,32 +873,31 @@ function ringsOption(aggrs, trees) {
     const along = arc > 2.5 * deep;
     if (along) {
       const size = Math.min(11, deep * 0.55);
-      return size < 8 ? { show: false } : { show: false, curve: { text: node.name, size, color: labelColor(node.state) } };
+      return size < 8 ? { show: false } : { show: false, curve: { text, size, color: labelColor(node.state) } };
     }
     const width = along ? arc * 0.85 : deep - 6;
     const size = Math.min(11, Math.max(8, (along ? deep : arc) * 0.55));
     const fits = Math.floor(width / (size * 0.6));
     // Whole, or at least 8 characters before the ellipsis; else none.
-    if (fits < Math.min(node.name.length, 8) || (along ? deep : arc) < 9) return { show: false };
-    return { show: true, rotate: "radial", width, overflow: "truncate", fontSize: size, fontWeight: 700,
+    if (fits < Math.min(text.length, 8) || (along ? deep : arc) < 9) return { show: false };
+    return { show: true, formatter: () => text, rotate: "radial", width, overflow: "truncate", fontSize: size, fontWeight: 700,
              color: labelColor(node.state) };
   }
 
   function build(node, level, path) {
     const here = path.concat(node.name);
-    if (!node.children.length) {
-      const pill = { name: node.name, value: 1, id: ref({ path: here, node, kind: node.service ? "service" : "host" }),
-                     itemStyle: { color: fill(node.state) }, label: { show: false }, tip: () => nodeTip(node, here) };
-      return [spacer(pill, level)];
-    }
-    const children = node.children.flatMap((c) => build(c, level + 1, here));
+    if (!node.children.length) return [pill([node], level, path)];
+    const children = runs(node.children).flatMap((run) =>
+      run.length === 1 && run[0].children.length ? build(run[0], level + 1, here) : [pill(run, level + 1, here)]);
     if (level >= rings) return children;
-    const named = label(node, level);
+    const named = label(node, level, shortName(node.name, path[path.length - 1]));
     return [{
       name: node.name,
       id: ref({ path: here, node, kind: level === 0 ? "aggregation" : "rule", arc: named.curve }),
-      itemStyle: { color: fill(node.state) },
+      itemStyle: paint(node.state),
       label: { ...named, curve: undefined },
+      // Hovered, ECharts would show a hidden label after all: over a bent name, the whole name.
+      emphasis: { label: { show: Boolean(named.show) } },
       tip: () => nodeTip(node, here),
       children,
     }];
@@ -744,19 +925,25 @@ function ringsOption(aggrs, trees) {
   };
 }
 
-// The BI trees as nested rectangles, sized by hosts and services; clicking one
-// zooms into it, the path above leads back.
+// The BI trees as nested rectangles, sized by hosts and services, the worst first (top
+// left), as the tiles; clicking one zooms into it, the path above leads back. The fills
+// are opaque: a rectangle lies on its parent's, and pale fills would add up.
 function treemapOption(aggrs, trees) {
+  const worstFirst = (nodes) => nodes.slice().sort((a, b) => severity(b.state) - severity(a.state) ||
+    b.leaves - a.leaves);
   function build(node, path) {
     const here = path.concat(node.name);
     const kind = path.length === 0 ? "aggregation" : node.children.length ? "rule" : node.service ? "service" : "host";
+    const color = opaque(fill(node.state));
     return {
-      name: node.name,
+      name: shortName(node.name, path[path.length - 1]),
       value: node.leaves,
       id: ref({ path: here, node, kind }),
-      itemStyle: { color: fill(node.state), borderColor: fill(node.state) },
+      itemStyle: { ...paint(node.state), color, borderColor: color },
+      label: { color: labelColor(node.state) },
+      upperLabel: { color: labelColor(node.state) },
       tip: () => nodeTip(node, here),
-      children: node.children.length ? node.children.map((c) => build(c, here)) : undefined,
+      children: node.children.length ? worstFirst(node.children).map((c) => build(c, here)) : undefined,
     };
   }
   const gap = css("--gap");
@@ -765,17 +952,17 @@ function treemapOption(aggrs, trees) {
       type: "treemap",
       // The root of the path below the rectangles.
       name: params.get("title") || "BI",
-      data: ordered(aggrs).map((a) => build(trees.get(a.title), [])),
+      data: bySeverity(aggrs).map((a) => build(trees.get(a.title), [])),
       sort: false,
       roam: false,
       leafDepth: depth,
       nodeClick: "zoomToNode",
-      width: "100%",
-      height: "88%",
-      top: 0,
+      // Room for the names: the zoom is the rectangle's own (nodeClick).
+      drillDownIcon: "",
+      left: 0, right: 0, top: 0, bottom: 32,
       visibleMin: 30,
-      label: { show: showLabels, color: "#000", fontSize: 11, overflow: "truncate" },
-      upperLabel: { show: showLabels, height: 18, color: "#000", fontWeight: 700 },
+      label: { show: showLabels, fontSize: 11, overflow: "truncate" },
+      upperLabel: { show: showLabels, height: 18, fontWeight: 700, overflow: "truncate" },
       breadcrumb: { show: true, bottom: 0, itemStyle: { color: css("--ring"), textStyle: { color: css("--fg") } } },
       levels: [
         { itemStyle: { gapWidth: 4, borderWidth: 0, borderColor: gap } },
@@ -793,9 +980,9 @@ function treeOption(aggrs, trees) {
     const here = path.concat(node.name);
     const kind = path.length === 0 ? "aggregation" : node.children.length ? "rule" : node.service ? "service" : "host";
     return {
-      name: node.name,
+      name: shortName(node.name, path[path.length - 1]),
       id: ref({ path: here, node, kind }),
-      itemStyle: { color: fill(node.state), borderColor: fill(node.state) },
+      itemStyle: { ...paint(node.state), borderColor: fill(node.state) },
       tip: () => nodeTip(node, here),
       children: node.children.map((c) => build(c, here)),
     };
@@ -813,6 +1000,8 @@ function treeOption(aggrs, trees) {
       type: "tree",
       data: [root],
       top: "4%", bottom: "4%", left: "10%", right: "22%",
+      // Filled: ECharts' default, an empty circle, leaves an open node without its color.
+      symbol: "circle",
       symbolSize: 9,
       initialTreeDepth: depth,
       expandAndCollapse: true,
@@ -857,7 +1046,7 @@ function groupsOption(aggrs, groups) {
                   kind: "group-state" }),
         stateId: s.id,
         group: group.name,
-        itemStyle: { color: fill(s.id) },
+        itemStyle: paint(s.id),
         tip: () => groupTip(group, mine),
       })),
     });
@@ -904,7 +1093,7 @@ function barsOption(aggrs, groups) {
         id: ref({ path: [g.name, s.label], state: s.id, scope: scope(g.name, g.titles), kind: "group-state" }),
         stateId: s.id,
         group: g.name,
-        itemStyle: { color: fill(s.id), borderRadius: 2 },
+        itemStyle: { ...paint(s.id), borderRadius: 2 },
         tip: () => groupTip(g, groupAggrs(aggrs, g)),
       })),
     })),
@@ -920,7 +1109,7 @@ function bySeverity(aggrs) {
 function aggrTip(aggr) {
   const state = stateOf(aggr.state);
   return '<div class="head">' + swatch(state.color) + esc(aggr.title) + "</div><div>" +
-    esc([state.label].concat(flagsOf(aggr)).join(", ")) + "</div>";
+    esc([state.label].concat(flagsOf(aggr)).join(", ")) + "</div>" + changedTip(aggr.title);
 }
 
 // The tiles' size (the hexagons' outer radius) and how many fit in a row: as large
@@ -961,10 +1150,13 @@ function tilesOption(aggrs) {
         const aggr = list[p.dataIndex];
         const flags = [aggr.acknowledged && "ack", aggr.inDowntime && "downtime"].filter(Boolean).join(", ");
         const named = showLabels && fontSize >= 8;
+        // Changed while the page was open: outlined.
+        const changed = changedAt(aggr.title) !== null;
         return {
           type: "polygon",
           shape: { points: corners.map((a) => [x + r * Math.cos(a), y + r * Math.sin(a)]) },
-          style: { fill: api.visual("color") },
+          style: { fill: api.visual("color"), stroke: changed ? css("--fg") : null, lineWidth: changed ? 3 : 0,
+                   decal: paint(aggr.state).decal },
           emphasis: { style: { stroke: css("--fg"), lineWidth: 2 } },
           textContent: named ? {
             style: { text: aggr.title + (flags ? "\n" + flags : ""), fill: labelColor(aggr.state),
@@ -1023,10 +1215,7 @@ function impactTip(leaf) {
 // before its name.
 function impactOption(aggrs, trees) {
   const leaves = impactOf(aggrs, trees).slice(0, topRows);
-  if (!leaves.length) {
-    return { title: { text: "All hosts and services are OK", left: "center", top: "middle",
-                      textStyle: { color: css("--muted"), fontSize: 13, fontWeight: 400 } } };
-  }
+  if (!leaves.length) return allOkOption();
   const per = leaves.map((leaf) => countStates(leaf.list));
   const rich = Object.fromEntries(STATES.map((s) => ["s" + (s.id < 0 ? "p" : s.id), { color: s.color, fontSize: 13 }]));
   // Braces would start rich text of their own.
@@ -1051,10 +1240,127 @@ function impactOption(aggrs, trees) {
         value: per[i].get(s.id),
         id: ref({ path: [leaf.name, s.label], state: s.id, kind: "impact",
                   scope: scope("leaf:" + leaf.key, new Set(leaf.list.map((a) => a.title))) }),
-        itemStyle: { color: fill(s.id), borderRadius: 2 },
+        itemStyle: { ...paint(s.id), borderRadius: 2 },
         tip: () => impactTip(leaf),
       })),
     })),
+  };
+}
+
+// The BI trees as a flow graph: a column of aggregations, a column per level of rules
+// up to depth, and the hosts last; every host or service flows by one from the rule
+// above it to its host. A host in several aggregations is one node, so that what they
+// share shows as flows meeting. Rules below depth are left out, their hosts hang from
+// the rule above them. Nodes carry their key (unique: a rule's by its path), the column
+// and what the tooltips need; links their size and the worst state flowing in them.
+function sankeyGraph(aggrs, trees) {
+  const rings = Math.max(1, Math.min(depth, Math.max(...aggrs.map((a) => trees.get(a.title).ruleLevels))));
+  const nodes = new Map(), links = new Map();
+  const worse = (a, b) => (severity(b) > severity(a) ? b : a);
+  function link(source, target, value, state) {
+    const key = source + "\u0000" + target;
+    const found = links.get(key) || { source, target, value: 0, state: 0, leaves: [] };
+    found.value += value;
+    found.state = worse(found.state, state);
+    links.set(key, found);
+    return found;
+  }
+  function walk(node, level, path, parent) {
+    const here = path.concat(node.name);
+    if (!node.children.length) {
+      const host = node.host || node.name;
+      const key = "h:" + host;
+      if (!nodes.has(key)) {
+        nodes.set(key, { key, label: host, column: rings, path: [host], kind: "host",
+                         node: { name: host, host, state: 0, acknowledged: false, inDowntime: false, children: [],
+                                 leaves: 0 },
+                         members: [], aggrs: new Set() });
+      }
+      const found = nodes.get(key);
+      found.node.state = worse(found.node.state, node.state);
+      found.node.leaves += 1;
+      found.members.push({ node, path: here });
+      found.aggrs.add(here[0]);
+      link(parent, key, 1, node.state).leaves.push(node);
+      return;
+    }
+    if (level >= rings) {
+      for (const child of node.children) walk(child, level + 1, here, parent);
+      return;
+    }
+    const key = (level === 0 ? "a:" : "r:") + here.join("\u0000");
+    nodes.set(key, { key, label: shortName(node.name, path[path.length - 1]), column: level, path: here,
+                     kind: level === 0 ? "aggregation" : "rule", node });
+    if (parent) link(parent, key, node.leaves, node.state);
+    for (const child of node.children) walk(child, level + 1, here, key);
+  }
+  for (const a of bySeverity(aggrs)) walk(trees.get(a.title), 0, [], null);
+  return { rings, nodes, links };
+}
+
+// The nodes per column of the flow graph, for its height.
+function sankeyColumns(aggrs, trees) {
+  if (!aggrs.length) return [];
+  const { rings, nodes } = sankeyGraph(aggrs, trees);
+  const counts = Array(rings + 1).fill(0);
+  for (const n of nodes.values()) counts[n.column] += 1;
+  return counts;
+}
+
+// Details of a host of the flow graph: its state, its hosts and services and the
+// aggregations it is part of.
+function sankeyHostTip(entry) {
+  const counts = new Map();
+  for (const m of entry.members) counts.set(m.node.state, (counts.get(m.node.state) || 0) + 1);
+  const state = stateOf(entry.node.state);
+  const worst = entry.members.slice().sort((a, b) => severity(b.node.state) - severity(a.node.state)).slice(0, 8);
+  let html = '<div class="head">' + swatch(state.color) + esc(entry.label) + "</div><div>" +
+    esc(entry.members.length + (entry.members.length === 1 ? " host or service: " : " hosts and services: ") +
+      stateSummary(counts)) + '</div><div class="more">In ' + entry.aggrs.size +
+    (entry.aggrs.size === 1 ? " aggregation" : " aggregations") + "</div><ul>" +
+    worst.map((m) => "<li>" + swatch(stateOf(m.node.state).color) + esc(m.path.join(" › ")) + "</li>").join("") +
+    "</ul>";
+  if (entry.members.length > worst.length) html += '<div class="more">and ' + (entry.members.length - worst.length) +
+    " more</div>";
+  return html;
+}
+
+function sankeyOption(aggrs, trees) {
+  const { nodes, links } = sankeyGraph(aggrs, trees);
+  // ECharts finds a link's ends by the nodes' ids (else their names): the ids of refs.
+  const ids = new Map([...nodes.keys()].map((key) => [key, null]));
+  const data = [...nodes.values()].map((n) => ({
+    name: n.key,
+    depth: n.column,
+    id: ids.set(n.key, ref({ path: n.path, node: n.node, kind: n.kind })).get(n.key),
+    itemStyle: { ...paint(n.node.state), borderWidth: 0 },
+    label: { formatter: () => n.label },
+    tip: () => (n.kind === "host" ? sankeyHostTip(n) : nodeTip(n.node, n.path)),
+  }));
+  const linkData = [...links.values()].map((l) => {
+    const from = nodes.get(l.source), to = nodes.get(l.target);
+    return {
+      source: ids.get(l.source),
+      target: ids.get(l.target),
+      value: l.value,
+      lineStyle: { color: fill(l.state), opacity: l.state === 0 ? 0.25 : 0.55 },
+      tip: () => '<div class="path">' + esc(from.path.join(" › ")) + '</div><div class="head">' + esc(to.label) +
+        "</div><div>" + l.value + (l.value === 1 ? " host or service" : " hosts and services") + "</div>",
+    };
+  });
+  return {
+    series: [{
+      type: "sankey",
+      data,
+      links: linkData,
+      left: 8, right: "18%", top: 8, bottom: 8,
+      nodeWidth: 10,
+      nodeGap: 6,
+      draggable: false,
+      emphasis: { focus: "adjacency" },
+      label: { show: showLabels, color: css("--fg"), fontSize: 11, width: 220, overflow: "truncate" },
+      lineStyle: { curveness: 0.5 },
+    }],
   };
 }
 
@@ -1110,8 +1416,14 @@ function renderList(aggrs) {
     href.searchParams.set("aggr_name", a.title);
     // _parent: replace the dashboard in Checkmk's main frame, not this iframe.
     const link = el("a", { href: href.toString(), target: "_parent", textContent: a.title });
-    const flags = [a.acknowledged && "ack", a.inDowntime && "downtime"].filter(Boolean).join(", ");
-    return el("li", {}, badge, link, el("span", { className: "flag", textContent: flags }));
+    const at = changedAt(a.title);
+    const flags = [a.acknowledged && "ack", a.inDowntime && "downtime", at && "since " + clock(at)]
+      .filter(Boolean).join(", ");
+    // Lit up on the first drawing after the change only, not on every one after it.
+    const fresh = at !== null && !litUp.has(a.title + "@" + at);
+    if (fresh) litUp.add(a.title + "@" + at);
+    return el("li", { className: at === null ? "" : fresh ? "changed new" : "changed" },
+      badge, link, el("span", { className: "flag", textContent: flags }));
   }));
 }
 
