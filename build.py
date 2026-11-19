@@ -30,21 +30,39 @@ VERSION = "0.4.0"
 #   web  ~/local/share/check_mk/web
 #   gui  ~/local/lib/check_mk/gui/plugins (2.4), ~/local/lib/python3/cmk/gui/plugins (2.5)
 FILES: dict[str, list[str]] = {
-    "web": ["htdocs/bi_charts/index.html"],
+    "web": [
+        "htdocs/bi_charts/index.html",
+        "htdocs/bi_charts/echarts.min.js",
+        "htdocs/bi_charts/LICENSE-echarts.txt",
+        "htdocs/bi_charts/NOTICE-echarts.txt",
+        "htdocs/bi_charts/LICENSE-zrender.txt",
+    ],
     "gui": ["dashboard/bi_charts"],
 }
 
+# The chart library and its licenses (Apache-2.0; zrender, which it bundles, BSD),
+# in the version package-lock.json pins: `npm ci` puts it into node_modules.
+MODULES = ROOT / "node_modules"
+VENDORED: dict[str, Path] = {
+    "web/htdocs/bi_charts/echarts.min.js": MODULES / "echarts/dist/echarts.min.js",
+    "web/htdocs/bi_charts/LICENSE-echarts.txt": MODULES / "echarts/LICENSE",
+    "web/htdocs/bi_charts/NOTICE-echarts.txt": MODULES / "echarts/NOTICE",
+    "web/htdocs/bi_charts/LICENSE-zrender.txt": MODULES / "zrender/LICENSE",
+}
+
 MANIFEST: dict[str, object] = {
-    "title": "BI aggregation state pie",
+    "title": "BI charts",
     "name": NAME,
     "description": (
-        "Dashboard element that shows the state distribution of BI aggregations "
-        "as a pie chart, with a list of the aggregations that are not OK. An "
-        "optional layered view adds one ring per level of the BI tree.\n\n"
+        "Dashboard element with charts of BI aggregations: their states as a "
+        "pie, the BI trees as rings, a treemap or a tree, and the states per "
+        "group as donuts or bars, with a list of the aggregations that are not "
+        "OK.\n\n"
         "Ships a static page that reads the BI aggregation states from the REST "
         "API with the viewer's session, and a dashboard that embeds it. Embed "
-        "the page in your own dashboards with the custom URL element and the "
-        "URL local/bi_charts/index.html."
+        "the page in your own dashboards with the custom URL element (2.4) or "
+        "the Embed URL widget (2.5) and the URL local/bi_charts/index.html. "
+        "Draws with Apache ECharts (Apache-2.0), which the package includes."
     ),
     "version": VERSION,
     "version.packaged": "2.4.0",
@@ -67,11 +85,19 @@ def _add(tar: tarfile.TarFile, name: str, content: bytes) -> None:
     tar.addfile(info, io.BytesIO(content))
 
 
+def _source(name: str) -> Path:
+    if name not in VENDORED:
+        return SRC / name
+    if not VENDORED[name].is_file():
+        raise SystemExit(f"{VENDORED[name]} is missing: run `npm ci` first")
+    return VENDORED[name]
+
+
 def _part_tar(part: str, files: list[str]) -> bytes:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w", format=tarfile.GNU_FORMAT) as tar:
         for name in files:
-            _add(tar, name, (SRC / part / name).read_bytes())
+            _add(tar, name, _source(f"{part}/{name}").read_bytes())
     return buffer.getvalue()
 
 

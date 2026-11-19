@@ -89,35 +89,66 @@ def frame(stub: checkmk_stub.Stub, widgets: list[tuple[str, str]], height: int) 
     return FRAME.format(height=height, boxes=boxes)
 
 
+GROUPS = "group=network&group=web&group=platform&group=business"
+# Picture -> the widgets side by side, their height, the path whose tooltip shows.
+SHOTS: dict[str, tuple[list[tuple[str, str]], int, str | None]] = {
+    "screenshot.png": ([("BI aggregation states", ""), ("Web applications", "group=web")], 420, None),
+    "screenshot-rings.png": (
+        [("view=rings", "view=rings"), ("Payment API (view=rings&depth=4)", "view=rings&depth=4&name=Payment%20API")],
+        560,
+        None,
+    ),
+    "screenshot-treemap.png": ([("view=treemap&depth=2", "view=treemap&depth=2&list=0")], 520, None),
+    "screenshot-tree.png": ([("view=tree&depth=2", "view=tree&depth=2&list=0")], 620, None),
+    "screenshot-groups.png": (
+        [("view=groups", "view=groups&list=0&" + GROUPS), ("view=bars", "view=bars&list=0&" + GROUPS)],
+        420,
+        None,
+    ),
+    "screenshot-hover.png": (
+        [("Payment API (view=rings&depth=4)", "view=rings&depth=4&name=Payment%20API&list=0")],
+        560,
+        "Payment API › Payment API Network",
+    ),
+}
+
+
 def main() -> None:
     checkmk_stub.tree = sample_tree
     stub = checkmk_stub.Stub(("127.0.0.1", 0), checkmk_stub.Handler)
     stub.aggregations = dict(SAMPLE)
     threading.Thread(target=stub.serve_forever, daemon=True).start()
-    shots = {
-        "screenshot.png": ([("BI aggregation states", "refresh=0"),
-                            ("Web applications", "group=web&refresh=0")], 420, None),
-        "screenshot-tree.png": ([("BI aggregation states (view=tree)", "view=tree&refresh=0"),
-                                 ("Payment API (view=tree&depth=4)", "view=tree&depth=4&name=Payment%20API&refresh=0")],
-                                560, None),
-        "screenshot-hover.png": ([("Payment API (view=tree&depth=4)",
-                                   "view=tree&depth=4&name=Payment%20API&refresh=0&list=0")], 560, "hover"),
-    }
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(args=["--no-sandbox"])
             page = browser.new_page(viewport={"width": 1250, "height": 640})
-            for name, (widgets, height, action) in shots.items():
-                page.set_content(frame(stub, widgets, height))
-                widget = page.frame_locator("iframe").first
-                widget.locator("#total").filter(has_text="?").or_(widget.locator("#legend tbody tr").first).wait_for()
-                if widgets[0][1].startswith("view=tree"):
-                    widget.locator("path.seg").first.wait_for()
-                if action == "hover":
-                    # A host rule in the problem layer: path, state, kind and what is below.
-                    widget.locator('path.seg[aria-label^="Payment API › Payment API"][data-state="2"]').nth(1).hover()
-                    widget.locator("#tip").wait_for()
-                page.screenshot(path=ROOT / "docs" / name, full_page=True)
+            for name, (widgets, height, tip) in SHOTS.items():
+                page.set_content(frame(stub, [(t, q + "&refresh=0&animation=0") for t, q in widgets], height))
+                for widget in page.frames[1:]:
+                    widget.wait_for_function("window.biCharts && biCharts.items().length > 0")
+                # Settled: drawn again after its size was known.
+                page.wait_for_timeout(500)
+                if tip:
+                    # The mouse onto the middle of the ring segment, from the layout
+                    # ECharts computed for it, as a person would hover it.
+                    x, y = page.frames[1].evaluate(
+                        """(path) => {
+                            const item = biCharts.items().find((i) => i.path.startsWith(path));
+                            const data = biCharts.chart.getModel().getSeriesByIndex(item.seriesIndex).getData();
+                            const l = data.getItemLayout(item.dataIndex);
+                            const angle = (l.startAngle + l.endAngle) / 2, r = (l.r0 + l.r) / 2;
+                            const box = document.getElementById("chart").getBoundingClientRect();
+                            return [box.left + l.cx + r * Math.cos(angle), box.top + l.cy + r * Math.sin(angle)];
+                        }""",
+                        tip,
+                    )
+                    frame_box = page.locator("iframe").first.bounding_box()
+                    assert frame_box
+                    page.mouse.move(frame_box["x"] + x, frame_box["y"] + y)
+                page.wait_for_timeout(600)
+                # The whole page, but at the window's size where a tooltip shows: a
+                # full-page shot resizes the window, which hides it.
+                page.screenshot(path=ROOT / "docs" / name, full_page=not tip)
                 print(ROOT / "docs" / name)
             browser.close()
     finally:

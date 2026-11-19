@@ -10,7 +10,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-PAGE = Path(__file__).parent.parent.parent / "src/web/htdocs/bi_charts/index.html"
+ROOT = Path(__file__).parent.parent.parent
+PAGE = ROOT / "src/web/htdocs/bi_charts/index.html"
+# The chart library, which the MKP ships beside the page (build.py; npm ci).
+ECHARTS = ROOT / "node_modules/echarts/dist/echarts.min.js"
 
 # Aggregation title -> (state, acknowledged, in downtime, BI group).
 AGGREGATIONS: dict[str, tuple[int, bool, bool, str]] = {
@@ -89,6 +92,8 @@ class Handler(BaseHTTPRequestHandler):
         path = url.path.removeprefix("/stub/check_mk/")
         if path == "local/bi_charts/index.html":
             self._send(200, "text/html", PAGE.read_bytes())
+        elif path == "local/bi_charts/echarts.min.js":
+            self._send(200, "text/javascript", ECHARTS.read_bytes())
         elif path == "dashboard.py":
             # Embedding page, as Checkmk renders it: themed <body>, widget in an iframe.
             html = (

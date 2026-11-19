@@ -39,7 +39,17 @@ def test_dashboard_embeds_the_page_site_relative() -> None:
 @pytest.mark.parametrize(
     "part, expected",
     [
-        pytest.param("web", ["htdocs/bi_charts/index.html"], id="web part"),
+        pytest.param(
+            "web",
+            [
+                "htdocs/bi_charts/index.html",
+                "htdocs/bi_charts/echarts.min.js",
+                "htdocs/bi_charts/LICENSE-echarts.txt",
+                "htdocs/bi_charts/NOTICE-echarts.txt",
+                "htdocs/bi_charts/LICENSE-zrender.txt",
+            ],
+            id="web part",
+        ),
         pytest.param("gui", ["dashboard/bi_charts"], id="gui part"),
     ],
 )
@@ -62,3 +72,16 @@ def test_mkp_manifests_agree() -> None:
 
 def test_build_is_reproducible() -> None:
     assert build.build().read_bytes() == build.build().read_bytes()
+
+
+def test_mkp_ships_the_chart_library_with_its_licenses() -> None:
+    with tarfile.open(build.build()) as mkp:
+        with tarfile.open(fileobj=io.BytesIO(mkp.extractfile("web.tar").read())) as web:
+            library = web.extractfile("htdocs/bi_charts/echarts.min.js").read()
+            notice = web.extractfile("htdocs/bi_charts/NOTICE-echarts.txt").read()
+    assert library == (ROOT / "node_modules/echarts/dist/echarts.min.js").read_bytes()
+    assert b"Apache ECharts" in notice
+    # The page loads the copy beside it, nothing from elsewhere.
+    page = (ROOT / "src/web/htdocs/bi_charts/index.html").read_text()
+    assert '<script src="echarts.min.js"></script>' in page
+    assert "https://" not in page.split("<script>")[0].split("<style>")[0]

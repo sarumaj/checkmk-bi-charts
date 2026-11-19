@@ -1,13 +1,49 @@
 """Browser tests of the page against the stub in checkmk_stub.py.
 
 Needs pytest-playwright and a browser (``playwright install chromium``, or
-``pytest --browser-channel chrome`` to use an installed Chrome).
+``pytest --browser-channel chrome`` to use an installed Chrome), and the chart
+library in node_modules (``npm ci``).
+
+ECharts draws shapes that say nothing about what they stand for, so the tests
+read the chart through the page's hook ``biCharts.items()``: every item's path,
+state, kind and color, and where ECharts keeps it, which also lets a test show
+an item's tooltip as hovering would.
 """
+
+from typing import Any
 
 import pytest
 from playwright.sync_api import Page, expect
 
 from checkmk_stub import Stub
+
+# 6 aggregations, each with 2 host rules of 2 services.
+RULES = 6 + 12
+SERVICES = 24
+
+
+def items(page: Page, count: int | None = None, kind: str | None = None) -> list[dict[str, Any]]:
+    """The chart's items (of one kind), once the chart shows at least ``count`` of them."""
+    if count:
+        page.wait_for_function(
+            "([count, kind]) => window.biCharts &&"
+            " biCharts.items().filter((i) => !kind || i.kind === kind).length >= count",
+            arg=[count, kind],
+        )
+    found = page.evaluate("biCharts.items()")
+    return [item for item in found if not kind or item["kind"] == kind]
+
+
+def show_tip(page: Page, path: str) -> None:
+    """Show an item's tooltip, as hovering it does."""
+    item = next(item for item in items(page) if item["path"] == path)
+    page.evaluate(
+        "([s, d]) => biCharts.chart.dispatchAction({ type: 'showTip', seriesIndex: s, dataIndex: d })",
+        [item["seriesIndex"], item["dataIndex"]],
+    )
+
+
+# --- the pie, the legend and the list ----------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -23,11 +59,35 @@ def test_legend_counts_and_shares(page: Page, stub: Stub, query: str, expected: 
     expect(page.locator("#legend tbody tr")).to_have_text(expected, use_inner_text=True)
 
 
-def test_flat_pie_has_one_slice_per_state_present(page: Page, stub: Stub) -> None:
+def test_pie_has_one_slice_per_state_present(page: Page, stub: Stub) -> None:
     page.goto(stub.page)
     expect(page.locator("#total")).to_have_text("6")
-    expect(page.locator("circle.slice")).to_have_count(4)
-    expect(page.locator("path.seg")).to_have_count(0)
+    slices = items(page, 4)
+    assert [(s["path"], s["kind"]) for s in slices] == [
+        ("OK", "state"), ("WARN", "state"), ("CRIT", "state"), ("UNKNOWN", "state")
+    ]
+
+
+def test_ok_is_paler_than_the_problems(page: Page, stub: Stub) -> None:
+    page.goto(stub.page)
+    colors = {s["path"]: s["color"] for s in items(page, 4)}
+    # 55 % opacity: 0x8c.
+    assert colors["OK"] == "#13d3898c"
+    assert colors["CRIT"] == "#ff3232"
+
+
+def test_muted_0_draws_ok_in_full_color(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?muted=0")
+    assert {s["path"]: s["color"] for s in items(page, 4)}["OK"] == "#13d389"
+
+
+def test_colors_replace_the_state_colors(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?colors=crit:00ff00,ok:0000ff&muted=0")
+    colors = {s["path"]: s["color"] for s in items(page, 4)}
+    assert (colors["CRIT"], colors["OK"]) == ("#00ff00", "#0000ff")
+    expect(page.locator("#legend tbody tr", has_text="CRIT").locator("i")).to_have_css(
+        "background-color", "rgb(0, 255, 0)"
+    )
 
 
 def test_list_holds_the_problems_worst_first(page: Page, stub: Stub) -> None:
@@ -46,57 +106,6 @@ def test_click_on_legend_row_narrows_the_list(page: Page, stub: Stub) -> None:
     expect(page.locator("#list li")).to_have_text(["OK Mail", "OK Shop", "OK Wiki"], use_inner_text=True)
 
 
-@pytest.mark.parametrize(
-    "depth, segments",
-    [
-        # 6 aggregations, each with 2 host rules of 2 services.
-        pytest.param(1, 6, id="aggregations only"),
-        pytest.param(2, 18, id="plus host rules"),
-        pytest.param(5, 18, id="deeper than the rules"),
-    ],
-)
-def test_tree_view_draws_one_ring_per_rule_level(page: Page, stub: Stub, depth: int, segments: int) -> None:
-    page.goto(f"{stub.page}?view=tree&depth={depth}")
-    expect(page.locator("path.seg")).to_have_count(segments)
-    # Every service is a pill in the outer band, however few rings are drawn.
-    expect(page.locator("path.leaf")).to_have_count(24)
-    expect(page.locator("circle.slice")).to_have_count(0)
-
-
-def test_pills_have_the_state_of_their_service(page: Page, stub: Stub) -> None:
-    page.goto(stub.page + "?view=tree&depth=1")
-    expect(page.locator('path.leaf[data-state="2"]')).to_have_count(1)
-    expect(page.locator('path.leaf[aria-label="Payment › Payment-1 › Payment-1 CPU: CRIT"]')).to_have_count(1)
-
-
-def test_wide_segments_carry_their_name(page: Page, stub: Stub) -> None:
-    page.set_viewport_size({"width": 900, "height": 700})
-    page.goto(stub.page + "?view=tree&depth=2")
-    expect(page.locator("text.label").first).to_be_attached()
-    names = page.locator("text.label").all_text_contents()
-    assert {"Payment", "ERP"} <= set(names), names
-    # A name cut short keeps at least five characters before its ellipsis.
-    assert all(not name.endswith("…") or len(name) >= 6 for name in names), names
-    # No name upside down: on screen, each one's reading direction points right
-    # (or straight up or down, where both are readable).
-    directions = page.locator("text.label").evaluate_all("(ts) => ts.map((t) => t.getScreenCTM().a)")
-    assert directions and all(a > -0.01 for a in directions), directions
-
-
-def test_labels_can_be_turned_off(page: Page, stub: Stub) -> None:
-    page.set_viewport_size({"width": 900, "height": 700})
-    page.goto(stub.page + "?view=tree&labels=0")
-    expect(page.locator("path.seg")).to_have_count(18)
-    expect(page.locator("text.label")).to_have_count(0)
-
-
-def test_labels_leave_out_what_would_be_unreadable(page: Page, stub: Stub) -> None:
-    page.set_viewport_size({"width": 200, "height": 200})
-    page.goto(stub.page + "?view=tree&depth=3")
-    expect(page.locator("path.seg")).to_have_count(18)
-    expect(page.locator("text.label")).to_have_count(0)
-
-
 def test_legend_bars_show_the_shares(page: Page, stub: Stub) -> None:
     page.goto(stub.page)
     expect(page.locator("#legend .fill")).to_have_count(4)
@@ -104,75 +113,164 @@ def test_legend_bars_show_the_shares(page: Page, stub: Stub) -> None:
     assert widths == [50, 16.7, 16.7, 16.7]
 
 
-def test_tree_view_legend_counts_hosts_and_services(page: Page, stub: Stub) -> None:
-    page.goto(stub.page + "?view=tree")
+def test_hover_on_slice_lists_its_aggregations(page: Page, stub: Stub) -> None:
+    page.goto(stub.page)
+    items(page, 4)
+    show_tip(page, "WARN")
+    expect(page.locator(".tip")).to_contain_text("WARN: 1 of 6 aggregations (16.7 %)")
+    expect(page.locator(".tip")).to_contain_text("Storage in downtime")
+
+
+def test_hover_on_legend_row_fades_other_states(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=rings&depth=2")
+    items(page, RULES)
+    page.locator("#legend tbody tr", has_text="CRIT").hover()
+    page.wait_for_function("biCharts.items().some((i) => i.faded)")
+    full = [i["path"] for i in items(page) if not i["faded"]]
+    # Payment, its failing host rule and that host's failing service.
+    assert full == ["Payment", "Payment › Payment-1", "Payment › Payment-1 › Payment-1 CPU"], full
+    # Off the row again: everything in full color.
+    page.mouse.move(1, 1)
+    page.wait_for_function("!biCharts.items().some((i) => i.faded)")
+
+
+# --- the views of the trees ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "depth, rules",
+    [
+        pytest.param(1, 6, id="aggregations only"),
+        pytest.param(2, RULES, id="plus host rules"),
+        pytest.param(5, RULES, id="deeper than the rules"),
+    ],
+)
+def test_rings_draw_one_ring_per_rule_level(page: Page, stub: Stub, depth: int, rules: int) -> None:
+    page.goto(f"{stub.page}?view=rings&depth={depth}")
+    items(page, SERVICES, "service")
+    found = items(page)
+    assert len([i for i in found if i["kind"] in ("aggregation", "rule")]) == rules
+    # Every service is a pill in the outer band, however few rings are drawn.
+    assert len([i for i in found if i["kind"] == "service"]) == SERVICES
+
+
+def test_rings_legend_counts_hosts_and_services(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=rings")
     # 24 services in total; each non-OK aggregation has exactly one bad service.
     expect(page.locator("#legend tbody tr")).to_have_text(
         ["OK 3 50 % 21", "WARN 1 17 % 1", "CRIT 1 17 % 1", "UNKNOWN 1 17 % 1"], use_inner_text=True
     )
 
 
+def test_wide_ring_segments_carry_their_name(page: Page, stub: Stub) -> None:
+    page.set_viewport_size({"width": 900, "height": 700})
+    page.goto(stub.page + "?view=rings&depth=2")
+    items(page, SERVICES, "service")
+    expect(page.locator("#chart text", has_text="Payment").first).to_be_attached()
+    expect(page.locator("#chart text", has_text="ERP").first).to_be_attached()
+
+
+def test_labels_0_draws_no_names(page: Page, stub: Stub) -> None:
+    page.set_viewport_size({"width": 900, "height": 700})
+    page.goto(stub.page + "?view=rings&labels=0")
+    items(page, SERVICES, "service")
+    expect(page.locator("#chart text")).to_have_count(0)
+
+
 @pytest.mark.parametrize(
-    "label, expected",
+    "path, expected",
     [
         pytest.param(
-            "Payment: CRIT",
+            "Payment",
             ["Payment", "CRIT, acknowledged", "Rule default / application", "4 hosts and services below: 3 OK, 1 CRIT"],
             id="aggregation",
         ),
         pytest.param(
-            "Payment › Payment-1: CRIT",
+            "Payment › Payment-1",
             ["Payment", "Payment-1", "CRIT", "Rule default / host", "2 hosts and services below: 1 OK, 1 CRIT"],
             id="rule",
         ),
         pytest.param(
-            "Payment › Payment-1 › Payment-1 CPU: CRIT",
+            "Payment › Payment-1 › Payment-1 CPU",
             ["Payment › Payment-1", "Payment-1 CPU", "CRIT", "Service on host Payment-1"],
             id="service",
         ),
     ],
 )
-def test_hover_on_segment_shows_its_details(page: Page, stub: Stub, label: str, expected: list[str]) -> None:
-    page.goto(stub.page + "?view=tree")
-    page.locator(f'[aria-label="{label}"]').hover()
-    expect(page.locator("#tip")).to_be_visible()
+@pytest.mark.parametrize("view", ["rings", "treemap", "tree"])
+def test_hover_on_a_node_shows_its_details(page: Page, stub: Stub, view: str, path: str, expected: list[str]) -> None:
+    page.goto(f"{stub.page}?view={view}")
+    items(page, SERVICES, "service")
+    show_tip(page, path)
     for line in expected:
-        expect(page.locator("#tip")).to_contain_text(line)
+        expect(page.locator(".tip")).to_contain_text(line)
 
 
-def test_hover_on_slice_lists_its_aggregations(page: Page, stub: Stub) -> None:
-    page.goto(stub.page)
-    # A slice is a dashed stroke on a full circle, so the pointer has to go onto
-    # the stroke itself: WARN covers 50 % to 66.7 % of the circumference.
-    x, y = page.locator('circle.slice[data-state="1"]').evaluate(
-        """(circle) => {
-            const point = circle.getPointAtLength(circle.getTotalLength() * 0.58);
-            const onScreen = point.matrixTransform(circle.getScreenCTM());
-            return [onScreen.x, onScreen.y];
-        }"""
-    )
-    page.mouse.move(x, y)
-    expect(page.locator("#tip")).to_contain_text("WARN: 1 of 6 aggregations (16.7 %)")
-    expect(page.locator("#tip")).to_contain_text("Storage in downtime")
+@pytest.mark.parametrize("view", ["treemap", "tree"])
+def test_treemap_and_tree_hold_every_node(page: Page, stub: Stub, view: str) -> None:
+    page.goto(f"{stub.page}?view={view}")
+    items(page, SERVICES, "service")
+    found = items(page)
+    kinds = [i["kind"] for i in found]
+    assert (kinds.count("aggregation"), kinds.count("rule"), kinds.count("service")) == (6, 12, SERVICES)
 
 
-def test_hover_on_legend_row_fades_other_states(page: Page, stub: Stub) -> None:
-    page.goto(stub.page + "?view=tree&depth=2")
-    page.locator("#legend tbody tr", has_text="CRIT").hover()
-    expect(page.locator("#tip")).to_contain_text("CRIT: 1 of 6 aggregations")
-    expect(page.locator("#slices.dim")).to_have_count(1)
-    # Payment and its failing host rule.
-    expect(page.locator("path.seg.hl")).to_have_count(2)
-    page.locator("#total").hover()
-    expect(page.locator("#slices.dim")).to_have_count(0)
-    expect(page.locator("#tip")).to_be_hidden()
-
-
-def test_tree_view_refuses_more_aggregations_than_max(page: Page, stub: Stub) -> None:
-    page.goto(stub.page + "?view=tree&max=5")
-    expect(page.locator("#msg")).to_contain_text("Tree view is limited to 5 aggregations, 6 matched")
-    expect(page.locator("circle.slice")).to_have_count(4)
+@pytest.mark.parametrize("view", ["rings", "treemap", "tree"])
+def test_views_of_the_trees_refuse_more_aggregations_than_max(page: Page, stub: Stub, view: str) -> None:
+    page.goto(f"{stub.page}?view={view}&max=5")
+    expect(page.locator("#msg")).to_contain_text(f"The {view} view is limited to 5 aggregations, 6 matched")
+    assert len(items(page, 4, "state")) == 4
     assert stub.tree_requests == 0
+
+
+def test_failed_tree_request_is_reported(page: Page, stub: Stub) -> None:
+    stub.tree_result_code = 1
+    page.goto(stub.page + "?view=rings")
+    expect(page.locator("#msg.err")).to_have_text("Loading the aggregation trees failed: tree unavailable")
+    assert items(page) == []
+
+
+# --- the views of the groups ---------------------------------------------------------
+
+
+def test_groups_draw_a_donut_per_group(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=groups&group=web&group=infra")
+    found = items(page, 5, "group-state")
+    assert sorted(i["path"] for i in found) == [
+        "infra › OK", "infra › UNKNOWN", "infra › WARN", "web › CRIT", "web › OK"
+    ]
+    titles = page.evaluate("biCharts.chart.getOption().title.map((t) => [t.subtext, t.text])")
+    # web: Shop and Wiki OK, Payment CRIT; infra: Mail OK, Storage WARN, ERP UNKNOWN.
+    assert titles == [["web", "67 %"], ["infra", "33 %"]]
+
+
+def test_groups_by_pack_without_group_parameters(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=groups")
+    found = items(page, 4, "group-state")
+    # The stub's trees are all of the BI pack "default".
+    assert sorted(i["path"] for i in found) == ["default › CRIT", "default › OK", "default › UNKNOWN", "default › WARN"]
+
+
+def test_bars_stack_the_states_per_group(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=bars&group=web&group=infra")
+    items(page, 5, "group-state")
+    option = page.evaluate(
+        "(() => { const o = biCharts.chart.getOption();"
+        " return { groups: o.yAxis[0].data, series: o.series.map((s) => [s.name, s.data.map((d) => d.value)]) }; })()"
+    )
+    assert option["groups"] == ["web", "infra"]
+    assert option["series"] == [["OK", [2, 1]], ["WARN", [0, 1]], ["CRIT", [1, 0]], ["UNKNOWN", [0, 1]]]
+
+
+def test_hover_on_a_group_shows_its_states(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=bars&group=web&group=infra")
+    items(page, 5, "group-state")
+    show_tip(page, "infra › WARN")
+    expect(page.locator(".tip")).to_contain_text("infra")
+    expect(page.locator(".tip")).to_contain_text("3 aggregations: 1 OK, 1 WARN, 1 UNKNOWN")
+
+
+# --- parameters, errors, theme ---------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -181,30 +279,32 @@ def test_tree_view_refuses_more_aggregations_than_max(page: Page, stub: Stub) ->
         pytest.param("?depth=0", "Parameter depth must be a positive integer.", id="depth zero"),
         pytest.param("?max=many", "Parameter max must be a positive integer.", id="max not a number"),
         pytest.param("?theme=blue", "Parameter theme must be dark or light.", id="unknown theme"),
+        pytest.param(
+            "?view=sankey", "Parameter view must be one of pie, rings, treemap, tree, groups, bars.", id="unknown view"
+        ),
+        pytest.param("?by=host", "Parameter by must be one of group, pack.", id="unknown grouping"),
+        pytest.param(
+            "?colors=crit:red",
+            "Parameter colors takes state:rrggbb pairs, e.g. ok:2e7d32,crit:c62828.",
+            id="color not hex",
+        ),
     ],
 )
 def test_invalid_parameter_is_reported(page: Page, stub: Stub, query: str, message: str) -> None:
     page.goto(stub.page + query)
     expect(page.locator("#msg.err")).to_have_text(message)
-    expect(page.locator("circle.slice")).to_have_count(0)
+    expect(page.locator("#legend tr")).to_have_count(0)
 
 
 def test_failed_refresh_removes_the_chart(page: Page, stub: Stub) -> None:
     page.goto(stub.page + "?refresh=1")
-    expect(page.locator("circle.slice")).to_have_count(4)
+    items(page, 4)
     stub.state_status = 500
     expect(page.locator("#msg.err")).to_contain_text("REST API returned HTTP 500")
-    expect(page.locator("circle.slice")).to_have_count(0)
+    assert items(page) == []
     expect(page.locator("#legend tr")).to_have_count(0)
     expect(page.locator("#list li")).to_have_count(0)
     expect(page.locator("#total")).to_have_text("?")
-
-
-def test_failed_tree_request_is_reported(page: Page, stub: Stub) -> None:
-    stub.tree_result_code = 1
-    page.goto(stub.page + "?view=tree")
-    expect(page.locator("#msg.err")).to_have_text("Loading the aggregation trees failed: tree unavailable")
-    expect(page.locator("path.seg")).to_have_count(0)
 
 
 @pytest.mark.parametrize(
@@ -226,8 +326,14 @@ def test_theme_follows_the_embedding_page(
 
 
 def test_names_are_inserted_as_text(page: Page, stub: Stub) -> None:
-    stub.aggregations = {'<img src=x onerror="document.title=1">': (2, False, False, "web")}
+    name = '<img src=x onerror="document.title=1">'
+    stub.aggregations = {name: (2, False, False, "web")}
     page.goto(stub.page)
-    expect(page.locator("#list a")).to_have_text('<img src=x onerror="document.title=1">')
+    expect(page.locator("#list a")).to_have_text(name)
     expect(page.locator("#list img")).to_have_count(0)
+    # The tooltip is HTML: the name goes in as text there too.
+    items(page, 1)
+    show_tip(page, "CRIT")
+    expect(page.locator(".tip")).to_contain_text(name)
+    expect(page.locator(".tip img")).to_have_count(0)
     assert page.title() == "BI aggregation states"

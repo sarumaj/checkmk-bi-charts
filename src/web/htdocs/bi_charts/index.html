@@ -1,36 +1,48 @@
 <!DOCTYPE html>
 <!--
-  BI aggregation state pie for Checkmk dashboards.
+  Charts of Checkmk BI aggregations for dashboards.
 
   Shipped by the bi_charts MKP and served at /<site>/check_mk/local/bi_charts/index.html.
-  Embed it with the custom URL dashboard element, using the site-relative URL
-  local/bi_charts/index.html (plus the query parameters below).
+  Embed it with the custom URL element (2.4) or the Embed URL widget (2.5), using
+  the site-relative URL local/bi_charts/index.html plus the query parameters below.
+  Draws with Apache ECharts (echarts.min.js beside this page, Apache-2.0).
 
   Query parameters (all optional):
-    group=<aggregation group>   repeatable, filters by BI aggregation group
+    view=<view>                 pie (default): the states of the aggregations
+                                rings:   the BI trees as rings, hosts and services
+                                         as pills around them
+                                treemap: the BI trees as nested rectangles
+                                tree:    the BI trees as a tree of nodes
+                                groups:  one donut per group
+                                bars:    one stacked bar per group
+    group=<aggregation group>   repeatable, filters by BI aggregation group; the
+                                groups of the views groups and bars
     name=<aggregation title>    repeatable, filters by aggregation title
+    by=group|pack               groups and bars: per aggregation group (default
+                                when group= is given) or per BI pack (otherwise)
+    depth=<levels>              rings, treemap, tree: rule levels shown, default 3
+    max=<count>                 views of the trees: most aggregations to load,
+                                default 40
     title=<text>                heading above the chart
     refresh=<seconds>           reload interval, default 60, 0 disables
     theme=dark|light            default: the Checkmk theme of the embedding
                                 page, dark when opened on its own
+    colors=<state>:<hex>,...    other colors, e.g. colors=ok:2e7d32,crit:c62828
+                                (states ok, warn, crit, unknown, pending)
+    muted=0                     OK in full color (default: paler than problems)
+    labels=0                    no names on the chart
+    legend=0                    hide the legend
     list=0                      hide the list of non-OK aggregations
+    animation=0                 no animation
     debug=1                     dump the raw REST response
-    view=tree                   layered view: one ring per level of the BI tree
-    depth=<rings>               tree view: number of rule rings, default 3
-    max=<count>                 tree view: most aggregations to load, default 40
-    labels=0                    tree view: no names on the ring segments
 
-  The tree view draws the rules of each aggregation's tree as rings, the
-  innermost one per aggregation, and every host and service below them as a
-  pill in a thin outer band, however deep it sits. Segments wide enough carry
-  their name. OK is drawn paler than the problem states, which stand out.
+  Hovering shows details; clicking a state narrows the list to it, clicking a
+  node of a tree shows its path below the chart; hovering a legend row fades
+  everything of another state.
 
-  Hovering a slice, a ring segment, a pill or a legend row shows its details;
-  hovering a legend row also fades everything of another state.
-
-  The aggregation states come from the REST API. The tree view additionally
-  loads each aggregation's full tree from ajax_fetch_aggregation_data.py, the
-  GUI endpoint behind Checkmk's own BI visualization, because the REST API only
+  The aggregation states come from the REST API. The views of the trees also
+  load each aggregation's full tree from ajax_fetch_aggregation_data.py, the GUI
+  endpoint behind Checkmk's own BI visualization, because the REST API only
   reports the nodes that have a problem. Both are called with the viewer's own
   GUI session, so every user sees only what they are permitted to see.
 -->
@@ -46,27 +58,22 @@
          display: flex; flex-direction: column; padding: 8px; box-sizing: border-box; }
   h1 { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
   #wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; flex: 0 0 auto; }
-  svg { width: min(45vw, 60vh, 220px); height: auto; flex: 0 0 auto; }
-  circle.slice { fill: none; stroke-width: 6; cursor: pointer; transition: stroke-width .15s; }
-  /* OK paler than the problem states, so that those stand out. */
-  circle.slice[data-state="0"], path.leaf[data-state="0"] { stroke-opacity: .55; }
-  path.seg[data-state="0"] { fill-opacity: .55; }
-  circle.slice:hover, circle.slice.active { stroke-width: 8; }
-  circle.ring { fill: none; stroke: var(--ring); stroke-width: 6; }
-  text.total { font-size: 8px; font-weight: 700; fill: var(--fg); text-anchor: middle; }
-  text.sub { font-size: 3px; fill: var(--muted); text-anchor: middle; }
-  /* Tree view: rings reach further in, so the centre label shrinks. */
-  body.tree svg { width: min(60vw, 80vh, 420px); }
-  body.tree circle.ring { display: none; }
-  body.tree text.total { font-size: 5px; }
-  body.tree text.sub { font-size: 2px; }
-  path.seg { stroke: var(--gap); stroke-width: .35; cursor: pointer; }
-  path.seg:hover, path.seg.active { opacity: .75; }
-  path.leaf { fill: none; stroke-linecap: round; cursor: pointer; }
-  path.leaf:hover { opacity: .75; }
-  /* Names along the radius; the pointer goes through to the segment. */
-  text.label { fill: #000; fill-opacity: .8; font-weight: 700; text-anchor: middle;
-               dominant-baseline: central; pointer-events: none; }
+  #stage { position: relative; flex: 0 0 auto; }
+  /* Round charts are square; the others take the width and a good part of the height. */
+  #chart { width: min(45vw, 60vh, 240px); aspect-ratio: 1; }
+  body.view-rings #chart { width: min(60vw, 80vh, 440px); }
+  body.view-treemap #stage, body.view-tree #stage, body.view-groups #stage,
+  body.view-bars #stage { flex: 1 1 100%; }
+  body.view-treemap #chart, body.view-tree #chart { width: 100%; aspect-ratio: auto;
+                                                    height: max(240px, 65vh); }
+  body.view-groups #chart, body.view-bars #chart { width: 100%; aspect-ratio: auto;
+                                                   height: max(200px, 45vh); }
+  /* The total in the middle of the round charts. */
+  #center { position: absolute; inset: 0; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; pointer-events: none; }
+  body:not(.view-pie):not(.view-rings) #center { display: none; }
+  #total { font-weight: 700; line-height: 1; }
+  #sub { color: var(--muted); }
   #detail { margin-top: 6px; min-height: 1.4em; }
   #detail .flag { color: var(--muted); font-size: 11px; }
   #legend { border-collapse: collapse; }
@@ -83,16 +90,11 @@
   #legend .track { display: inline-block; width: 48px; height: 5px; border-radius: 3px;
                    background: var(--ring); overflow: hidden; vertical-align: middle; }
   #legend .fill { display: block; height: 100%; }
-  /* While a legend row is hovered, everything of another state fades. */
-  #slices.dim > :not(.hl) { opacity: .2; }
-  #tip { position: fixed; z-index: 10; pointer-events: none; max-width: min(320px, 90vw);
-         background: var(--tip-bg); color: var(--fg); border: 1px solid var(--ring);
-         border-radius: 4px; padding: 6px 8px; font-size: 12px;
-         box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
-  #tip .head { font-weight: 700; }
-  #tip .path, #tip .more { color: var(--muted); }
-  #tip ul { list-style: none; margin: 4px 0 0; padding: 0; }
-  #tip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 5px; }
+  .tip { max-width: min(320px, 90vw); white-space: normal !important; }
+  .tip .head { font-weight: 700; }
+  .tip .path, .tip .more { color: var(--muted); }
+  .tip ul { list-style: none; margin: 4px 0 0; padding: 0; }
+  .tip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 5px; }
   #list { list-style: none; margin: 8px 0 0; padding: 0; overflow: auto; flex: 1 1 auto; }
   #list li { display: flex; gap: 6px; align-items: baseline; padding: 1px 0; }
   #list .badge { font-size: 10px; font-weight: 700; color: #000; border-radius: 2px;
@@ -104,74 +106,133 @@
   #msg.err { color: #ff6464; }
   pre { font-size: 11px; overflow: auto; }
 </style>
+<script src="echarts.min.js"></script>
 </head>
 <body>
 <h1 id="title" hidden></h1>
 <div id="wrap">
-  <svg id="chart" viewBox="0 0 42 42" role="img" aria-label="BI aggregation states">
-    <circle class="ring" id="ring" cx="21" cy="21" r="15.9155"/>
-    <g id="slices" transform="rotate(-90 21 21)"></g>
-    <g id="labels" transform="rotate(-90 21 21)"></g>
-    <text class="total" x="21" y="22.5" id="total"></text>
-    <text class="sub" x="21" y="27" id="sub">aggregations</text>
-  </svg>
+  <div id="stage">
+    <div id="chart" role="img" aria-label="BI aggregation states"></div>
+    <div id="center"><span id="total"></span><span id="sub">aggregations</span></div>
+  </div>
   <table id="legend"></table>
 </div>
 <div id="detail"></div>
 <ul id="list"></ul>
 <div id="msg"></div>
 <pre id="debug" hidden></pre>
-<div id="tip" hidden></div>
 
 <script>
 "use strict";
 
 // Checkmk monitoring states; -1 is PENDING. Order is the draw order.
 const STATES = [
-  { id: 0,  label: "OK",      color: "#13d389" },
-  { id: 1,  label: "WARN",    color: "#ffd703" },
-  { id: 2,  label: "CRIT",    color: "#ff3232" },
-  { id: 3,  label: "UNKNOWN", color: "#ff8800" },
-  { id: -1, label: "PENDING", color: "#8a949e" },
+  { id: 0,  key: "ok",      label: "OK",      color: "#13d389" },
+  { id: 1,  key: "warn",    label: "WARN",    color: "#ffd703" },
+  { id: 2,  key: "crit",    label: "CRIT",    color: "#ff3232" },
+  { id: 3,  key: "unknown", label: "UNKNOWN", color: "#ff8800" },
+  { id: -1, key: "pending", label: "PENDING", color: "#8a949e" },
 ];
-const SVG_NS = "http://www.w3.org/2000/svg";
+const VIEWS = ["pie", "rings", "treemap", "tree", "groups", "bars"];
+// The views that need every aggregation's tree.
+const TREE_VIEWS = ["rings", "treemap", "tree"];
 
 const params = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
 
 // The page lives at /<site>/check_mk/local/bi_charts/, the GUI at /<site>/check_mk/.
 const GUI_BASE = new URL("../../", location.href);
-const API_URL = new URL(
-  "api/1.0/domain-types/bi_aggregation/actions/aggregation_state/invoke", GUI_BASE);
-for (const g of params.getAll("group")) API_URL.searchParams.append("filter_groups", g);
-for (const n of params.getAll("name")) API_URL.searchParams.append("filter_names", n);
+const STATE_PATH = "api/1.0/domain-types/bi_aggregation/actions/aggregation_state/invoke";
+const groupsGiven = params.getAll("group");
 
-const showList = params.get("list") !== "0";
-const showLabels = params.get("labels") !== "0";
-const treeView = params.get("view") === "tree";
-const depth = positiveInt("depth", 3);      // rings drawn in the tree view
+const view = choice("view", VIEWS, "pie");
+const by = choice("by", ["group", "pack"], groupsGiven.length ? "group" : "pack");
+const depth = positiveInt("depth", 3);      // rule levels drawn in the views of the trees
 const maxTrees = positiveInt("max", 40);    // one request per aggregation and refresh
+const showList = params.get("list") !== "0";
+const showLegend = params.get("legend") !== "0";
+const showLabels = params.get("labels") !== "0";
+const muted = params.get("muted") !== "0";
+const animate = params.get("animation") !== "0";
+applyColors();
+
 let selected = null;   // state id the list is narrowed to, or null for all non-OK
-let lastAggrs = [];
-let lastTrees = null;  // Map of aggregation title -> tree, or null for the flat pie
-let labelSpots = [];   // ring segments that may carry their name: {name, r0, r1, a0, a1}
+let selectedGroup = null;  // group name the list is narrowed to (views groups, bars)
+let faded = null;      // state id a hovered legend row leaves in full color
+let last = null;       // what the last load found: {aggrs, trees, groups}
+let refs = new Map();  // chart item id -> {path, node or state or group}
+
+function fail(text) {
+  last = null;
+  refs = new Map();
+  if (chart) chart.clear();
+  for (const id of ["legend", "list", "detail"]) $(id).replaceChildren();
+  $("total").textContent = "?";
+  message(text, true);
+}
+
+function message(text, isError) {
+  $("msg").textContent = text || "";
+  $("msg").classList.toggle("err", Boolean(isError));
+}
+
+// A parameter's mistake is shown in the widget; the throw then stops the script.
+function invalid(text) {
+  message(text, true);
+  throw new Error(text);
+}
 
 function positiveInt(name, fallback) {
   if (!params.has(name)) return fallback;
   const value = Number(params.get(name));
-  if (!Number.isInteger(value) || value < 1) {
-    // Show the mistake in the widget; the throw then stops the script.
-    message("Parameter " + name + " must be a positive integer.", true);
-    throw new Error("invalid parameter " + name);
-  }
+  if (!Number.isInteger(value) || value < 1) invalid("Parameter " + name + " must be a positive integer.");
   return value;
 }
 
-if (theme() === "light") document.body.classList.add("light");
-if (treeView) document.body.classList.add("tree");
-if (params.get("title")) {
-  $("title").textContent = params.get("title");
-  $("title").hidden = false;
+function choice(name, allowed, fallback) {
+  if (!params.has(name)) return fallback;
+  const value = params.get(name);
+  if (!allowed.includes(value)) invalid("Parameter " + name + " must be one of " + allowed.join(", ") + ".");
+  return value;
+}
+
+// colors=ok:2e7d32,crit:c62828
+function applyColors() {
+  if (!params.has("colors")) return;
+  for (const pair of params.get("colors").split(",")) {
+    const [key, hex] = pair.split(":");
+    const state = STATES.find((s) => s.key === key);
+    if (!state || !/^[0-9a-fA-F]{6}$/.test(hex || "")) {
+      invalid("Parameter colors takes state:rrggbb pairs, e.g. ok:2e7d32,crit:c62828.");
+    }
+    state.color = "#" + hex;
+  }
+}
+
+function el(tag, props, ...children) {
+  const node = document.createElement(tag);
+  Object.assign(node, props);
+  node.append(...children);
+  return node;
+}
+
+// For the tooltips, which ECharts takes as HTML: names come from the BI
+// configuration and are inserted as text.
+function esc(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;",
+    "\"": "&quot;", "'": "&#39;" })[c]);
+}
+
+const stateOf = (id) => STATES.find((s) => s.id === id);
+const css = (name) => getComputedStyle(document.body).getPropertyValue(name).trim();
+
+// A state's fill: OK paler than the problem states, so that those stand out; a
+// state other than the one of a hovered legend row faded.
+function fill(id) {
+  const color = stateOf(id).color;
+  let alpha = muted && id === 0 ? 0.55 : 1;
+  if (faded !== null && id !== faded) alpha *= 0.2;
+  return alpha === 1 ? color : color + Math.round(alpha * 255).toString(16).padStart(2, "0");
 }
 
 // Explicit theme parameter, else the theme of the embedding Checkmk page, which
@@ -179,10 +240,7 @@ if (params.get("title")) {
 function theme() {
   const explicit = params.get("theme");
   if (explicit === "dark" || explicit === "light") return explicit;
-  if (explicit !== null) {
-    message("Parameter theme must be dark or light.", true);
-    throw new Error("invalid parameter theme");
-  }
+  if (explicit !== null) invalid("Parameter theme must be dark or light.");
   // Same origin when embedded in Checkmk; any other parent is not readable.
   let parentTheme;
   try {
@@ -193,85 +251,96 @@ function theme() {
   return parentTheme && !parentTheme.includes("dark") ? "light" : "dark";
 }
 
-// Shows an error and removes the chart, so that outdated data cannot be
-// mistaken for the current state.
-function fail(text) {
-  lastAggrs = [];
-  lastTrees = null;
-  labelSpots = [];
-  for (const id of ["slices", "labels", "legend", "list", "detail"]) $(id).replaceChildren();
-  $("total").textContent = "?";
-  $("tip").hidden = true;
-  message(text, true);
+if (theme() === "light") document.body.classList.add("light");
+document.body.classList.add("view-" + view);
+if (params.get("title")) {
+  $("title").textContent = params.get("title");
+  $("title").hidden = false;
+}
+if (typeof echarts === "undefined") invalid("The chart library (echarts.min.js) did not load.");
+const chart = echarts.init($("chart"), null, { renderer: "svg" });
+
+// --- loading -----------------------------------------------------------------
+
+async function getJson(url) {
+  const resp = await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } });
+  if (resp.status === 401 || resp.status === 403) {
+    throw new Error("Not authorised (HTTP " + resp.status + "). Log in to Checkmk first.");
+  }
+  if (!resp.ok) throw new Error("REST API returned HTTP " + resp.status + ":\n" + (await resp.text()).slice(0, 400));
+  return resp.json();
 }
 
-function message(text, isError) {
-  $("msg").textContent = text || "";
-  $("msg").classList.toggle("err", Boolean(isError));
-}
-
-function el(tag, props, ...children) {
-  const node = document.createElement(tag);
-  Object.assign(node, props);
-  node.append(...children);
-  return node;
+// The states of the aggregations of the given groups (all when empty).
+async function loadStates(groups) {
+  const url = new URL(STATE_PATH, GUI_BASE);
+  for (const g of groups) url.searchParams.append("filter_groups", g);
+  for (const n of params.getAll("name")) url.searchParams.append("filter_names", n);
+  const data = await getJson(url);
+  // Expected: {aggregations: {<title>: {state, acknowledged, in_downtime, ...}},
+  //            missing_sites: [...], missing_aggr: [...]}
+  const body = data.aggregations ? data : (data.extensions || {});
+  return {
+    raw: data,
+    aggrs: Object.entries(body.aggregations || {}).map(([title, a]) => ({
+      title,
+      state: stateOf(a.state) ? a.state : 3,
+      acknowledged: Boolean(a.acknowledged),
+      inDowntime: Boolean(a.in_downtime),
+    })),
+    missingSites: body.missing_sites || [],
+    missingAggr: body.missing_aggr || [],
+  };
 }
 
 async function load() {
-  let data;
+  let found, trees = null, groups = null;
+  const notes = [];
   try {
-    const resp = await fetch(API_URL, {
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-    });
-    if (resp.status === 401 || resp.status === 403) {
-      throw new Error("Not authorised (HTTP " + resp.status + "). Log in to Checkmk first.");
+    found = await loadStates(groupsGiven);
+    if (params.get("debug") === "1") {
+      $("debug").hidden = false;
+      $("debug").textContent = JSON.stringify(found.raw, null, 2);
     }
-    if (!resp.ok) {
-      throw new Error("REST API returned HTTP " + resp.status + ":\n" + (await resp.text()).slice(0, 400));
+    const needTrees = TREE_VIEWS.includes(view) || (["groups", "bars"].includes(view) && by === "pack");
+    if (needTrees && found.aggrs.length > maxTrees) {
+      // Refuse instead of loading a partial tree set that would look complete.
+      notes.push("The " + view + " view is limited to " + maxTrees + " aggregations, " + found.aggrs.length +
+        " matched. Showing the pie; narrow with group= / name= or raise max=.");
+    } else if (needTrees) {
+      try {
+        trees = await loadTrees(found.aggrs.map((a) => a.title));
+      } catch (err) {
+        fail("Loading the aggregation trees failed: " + String(err.message || err));
+        return;
+      }
     }
-    data = await resp.json();
+    if (view === "groups" || view === "bars") {
+      if (by === "group") {
+        // The state endpoint does not say an aggregation's group: one request per group.
+        if (!groupsGiven.length) notes.push("Name the groups with group=, or use by=pack.");
+        const answers = await Promise.all(groupsGiven.map((g) => loadStates([g])));
+        groups = groupsGiven.map((g, i) => ({ name: g, titles: new Set(answers[i].aggrs.map((a) => a.title)) }));
+      } else if (trees) {
+        const packs = new Map();
+        for (const [title, tree] of trees) {
+          const pack = tree.pack || "(no pack)";
+          if (!packs.has(pack)) packs.set(pack, new Set());
+          packs.get(pack).add(title);
+        }
+        groups = [...packs].sort((a, b) => a[0].localeCompare(b[0])).map(([name, titles]) => ({ name, titles }));
+      }
+    }
   } catch (err) {
     fail(String(err.message || err));
     return;
   }
+  last = { aggrs: found.aggrs, trees, groups };
+  render();
 
-  if (params.get("debug") === "1") {
-    $("debug").hidden = false;
-    $("debug").textContent = JSON.stringify(data, null, 2);
-  }
-
-  // Expected: {aggregations: {<title>: {state, acknowledged, in_downtime, ...}},
-  //            missing_sites: [...], missing_aggr: [...]}
-  const body = data.aggregations ? data : (data.extensions || {});
-  const aggrs = Object.entries(body.aggregations || {}).map(([title, a]) => ({
-    title,
-    state: STATES.some((s) => s.id === a.state) ? a.state : 3,
-    acknowledged: Boolean(a.acknowledged),
-    inDowntime: Boolean(a.in_downtime),
-  }));
-  const notes = [];
-  let trees = null;
-  if (treeView && aggrs.length > maxTrees) {
-    // Refuse instead of loading a partial tree set that would look complete.
-    notes.push("Tree view is limited to " + maxTrees + " aggregations, " + aggrs.length +
-      " matched. Showing the flat pie; narrow with group= / name= or raise max=.");
-  } else if (treeView) {
-    try {
-      trees = await loadTrees(aggrs.map((a) => a.title));
-    } catch (err) {
-      fail("Loading the aggregation trees failed: " + String(err.message || err));
-      return;
-    }
-  }
-  document.body.classList.toggle("tree", trees !== null);
-  lastAggrs = aggrs;
-  lastTrees = trees;
-  render(aggrs);
-
-  if (!aggrs.length) notes.push("No aggregations matched.");
-  if ((body.missing_sites || []).length) notes.push("Missing sites: " + body.missing_sites.join(", "));
-  if ((body.missing_aggr || []).length) notes.push("Missing aggregations: " + body.missing_aggr.join(", "));
+  if (!found.aggrs.length) notes.push("No aggregations matched.");
+  if (found.missingSites.length) notes.push("Missing sites: " + found.missingSites.join(", "));
+  if (found.missingAggr.length) notes.push("Missing aggregations: " + found.missingAggr.join(", "));
   message(notes.join("\n"), false);
 }
 
@@ -301,22 +370,25 @@ async function loadTree(title) {
   return toNode(root);
 }
 
-// Reduces a node of Checkmk's BI visualization data to what the chart needs.
+// Reduces a node of Checkmk's BI visualization data to what the charts need.
 function toNode(raw) {
   const core = (raw.type_specific && raw.type_specific.core) || {};
   const children = (raw.children || []).map(toNode);
   return {
     name: String(raw.name),
-    state: STATES.some((s) => s.id === core.state) ? core.state : 3,
+    state: stateOf(core.state) ? core.state : 3,
     acknowledged: Boolean(core.acknowledged),
     inDowntime: Boolean(core.in_downtime),
     // Rules are inner nodes; leaves are hosts or services.
     rule: raw.rule_id ? raw.rule_id.pack + " / " + raw.rule_id.rule : null,
+    pack: raw.rule_id ? raw.rule_id.pack : null,
     host: core.hostname || null,
     service: core.service || null,
     children,
-    // Angular weight: every host or service counts once.
+    // Size: every host or service counts once.
     leaves: children.length ? children.reduce((sum, c) => sum + c.leaves, 0) : 1,
+    // Levels of rules from here down.
+    ruleLevels: children.length ? 1 + Math.max(...children.map((c) => c.ruleLevels)) : 0,
   };
 }
 
@@ -336,339 +408,451 @@ function stateSummary(counts) {
   return STATES.filter((s) => counts.get(s.id)).map((s) => counts.get(s.id) + " " + s.label).join(", ");
 }
 
-// --- hover details ----------------------------------------------------------
-
-// Shows the nodes build() returns next to the pointer while it is over element.
-function hoverTip(element, build) {
-  element.addEventListener("mouseenter", () => {
-    $("tip").replaceChildren(...build());
-    $("tip").hidden = false;
-  });
-  element.addEventListener("mousemove", (event) => {
-    // Keep the box inside the widget: flip to the other side of the pointer
-    // where it would otherwise be cut off.
-    const tip = $("tip"), gap = 12;
-    const x = event.clientX + gap + tip.offsetWidth > innerWidth
-      ? event.clientX - gap - tip.offsetWidth : event.clientX + gap;
-    const y = event.clientY + gap + tip.offsetHeight > innerHeight
-      ? event.clientY - gap - tip.offsetHeight : event.clientY + gap;
-    tip.style.left = Math.max(0, x) + "px";
-    tip.style.top = Math.max(0, y) + "px";
-  });
-  element.addEventListener("mouseleave", () => { $("tip").hidden = true; });
+// The aggregations in state order, as the pie and the inner ring show them.
+function ordered(aggrs) {
+  return aggrs.slice().sort((a, b) =>
+    STATES.findIndex((s) => s.id === a.state) - STATES.findIndex((s) => s.id === b.state) ||
+    a.title.localeCompare(b.title));
 }
 
-function swatch(color) {
-  const mark = el("i", {});
-  mark.style.background = color;
-  return mark;
-}
+// --- tooltips (HTML) ------------------------------------------------------------
+
+const swatch = (color) => '<i style="background:' + color + '"></i>';
 
 // Details of one state: share of the aggregations and their names.
 function stateTip(state, aggrs) {
   const mine = aggrs.filter((a) => a.state === state.id).sort((a, b) => a.title.localeCompare(b.title));
   const share = aggrs.length ? (mine.length / aggrs.length * 100).toFixed(1) : "0.0";
   const shown = mine.slice(0, 8);
-  const nodes = [
-    el("div", { className: "head" }, swatch(state.color),
-      state.label + ": " + mine.length + " of " + aggrs.length + " aggregations (" + share + " %)"),
-    el("ul", {}, ...shown.map((a) => el("li", {}, a.title + " ",
-      el("span", { className: "more", textContent: flagsOf(a).join(", ") })))),
-  ];
-  if (mine.length > shown.length) {
-    nodes.push(el("div", { className: "more", textContent: "and " + (mine.length - shown.length) + " more" }));
-  }
-  if (lastTrees) {
+  let html = '<div class="head">' + swatch(state.color) + esc(state.label) + ": " + mine.length + " of " +
+    aggrs.length + " aggregations (" + share + " %)</div><ul>" +
+    shown.map((a) => "<li>" + esc(a.title) + ' <span class="more">' + esc(flagsOf(a).join(", ")) +
+      "</span></li>").join("") + "</ul>";
+  if (mine.length > shown.length) html += '<div class="more">and ' + (mine.length - shown.length) + " more</div>";
+  if (last && last.trees) {
     const leaves = new Map();
-    for (const a of mine) leafStates(lastTrees.get(a.title), leaves);
-    nodes.push(el("div", { className: "more", textContent: "Hosts and services below: " + stateSummary(leaves) }));
+    for (const a of mine) leafStates(last.trees.get(a.title), leaves);
+    html += '<div class="more">Hosts and services below: ' + esc(stateSummary(leaves)) + "</div>";
   }
-  return nodes;
+  return html;
 }
 
-// Details of one tree segment: where it sits, what it is and what is below it.
+// Details of one tree node: where it sits, what it is and what is below it.
 function nodeTip(node, path) {
-  const state = STATES.find((s) => s.id === node.state);
-  const kind = node.rule ? "Rule " + node.rule
-    : node.service ? "Service on host " + node.host : "Host";
-  const nodes = [];
-  if (path.length > 1) {
-    nodes.push(el("div", { className: "path", textContent: path.slice(0, -1).join(" \u203a ") }));
-  }
-  nodes.push(el("div", { className: "head" }, swatch(state.color), node.name));
-  nodes.push(el("div", { textContent: [state.label].concat(flagsOf(node)).join(", ") }));
-  nodes.push(el("div", { className: "more", textContent: kind }));
+  const state = stateOf(node.state);
+  const kind = node.rule ? "Rule " + node.rule : node.service ? "Service on host " + node.host : "Host";
+  let html = "";
+  if (path.length > 1) html += '<div class="path">' + esc(path.slice(0, -1).join(" › ")) + "</div>";
+  html += '<div class="head">' + swatch(state.color) + esc(node.name) + "</div>";
+  html += "<div>" + esc([state.label].concat(flagsOf(node)).join(", ")) + "</div>";
+  html += '<div class="more">' + esc(kind) + "</div>";
   if (node.children.length) {
-    nodes.push(el("div", { className: "more",
-      textContent: node.leaves + " hosts and services below: " + stateSummary(leafStates(node)) }));
+    html += '<div class="more">' + node.leaves + " hosts and services below: " +
+      esc(stateSummary(leafStates(node))) + "</div>";
   }
-  return nodes;
+  return html;
 }
 
-// Fades every slice and segment that is not of the given state (null: none).
-function highlight(stateId) {
-  $("slices").classList.toggle("dim", stateId !== null);
-  for (const mark of $("slices").children) {
-    mark.classList.toggle("hl", Number(mark.dataset.state) === stateId);
-  }
+// Details of one group: its states.
+function groupTip(group, aggrs) {
+  const counts = countStates(aggrs);
+  return '<div class="head">' + esc(group.name) + "</div><div>" + aggrs.length + " aggregations: " +
+    esc(stateSummary(counts)) + "</div>";
 }
 
-// Point at radius r and angle a (radians, clockwise from the group's zero
-// direction, which the rotated <g> points to twelve o'clock), as "x,y".
-function at(r, a) {
-  return (21 + r * Math.cos(a)).toFixed(3) + "," + (21 + r * Math.sin(a)).toFixed(3);
-}
-
-// Ring segment between two radii and two angles.
-function segmentPath(r0, r1, a0, a1) {
-  if (a1 - a0 >= 2 * Math.PI - 1e-9) {
-    // An arc cannot span a full circle, so draw two circles and cut the inner out.
-    const circle = (r) => "M" + (21 - r) + ",21a" + r + "," + r + " 0 1,0 " + 2 * r + ",0a" +
-      r + "," + r + " 0 1,0 " + -2 * r + ",0Z";
-    return circle(r1) + circle(r0);
-  }
-  const large = a1 - a0 > Math.PI ? 1 : 0;
-  return "M" + at(r1, a0) + "A" + r1 + "," + r1 + " 0 " + large + ",1 " + at(r1, a1) +
-    "L" + at(r0, a1) + "A" + r0 + "," + r0 + " 0 " + large + ",0 " + at(r0, a0) + "Z";
-}
-
-// The tree view's radii: the rule rings, then the band of hosts and services.
-const INNER = 7.5, RULES_OUTER = 18.3, BAND = 19.7, BAND_WIDTH = 1.3;
-
-// Layered view: ring 1 holds one equal segment per aggregation, each further
-// ring the next level of rules, with children sharing their parent's angle by
-// the number of hosts and services below them. The hosts and services
-// themselves are pills in the outer band, below rules of any depth.
-function renderTree(aggrs, trees) {
-  const width = (RULES_OUTER - INNER) / depth;
-  const slices = $("slices");
-  slices.replaceChildren();
-  labelSpots = [];
-
-  function mark(tag, node, here) {
-    const state = STATES.find((s) => s.id === node.state);
-    const shape = document.createElementNS(SVG_NS, tag);
-    shape.dataset.state = node.state;
-    shape.setAttribute("aria-label", here.join(" \u203a ") + ": " + state.label);
-    hoverTip(shape, () => nodeTip(node, here));
-    slices.append(shape);
-    return [shape, state];
-  }
-
-  function draw(node, a0, a1, level, path) {
-    const here = path.concat(node.name);
-    if (!node.children.length) {
-      pill(node, a0, a1, here);
-      return;
-    }
-    if (level < depth) {
-      const r0 = INNER + level * width, r1 = r0 + width;
-      const [seg, state] = mark("path", node, here);
-      seg.setAttribute("class", "seg");
-      seg.setAttribute("fill", state.color);
-      seg.setAttribute("fill-rule", "evenodd");
-      seg.setAttribute("d", segmentPath(r0, r1, a0, a1));
-      seg.addEventListener("click", () => showDetail(seg, node, here));
-      labelSpots.push({ name: node.name, r0, r1, a0, a1 });
-    }
-    let start = a0;
-    for (const child of node.children) {
-      const end = start + (a1 - a0) * child.leaves / node.leaves;
-      draw(child, start, end, level + 1, here);
-      start = end;
-    }
-  }
-
-  // A host or service: an arc with round ends in the band, a dot where its
-  // angle is too small for more, with a gap to its neighbours.
-  function pill(node, a0, a1, here) {
-    // A problem stays visible among hundreds of OK pills: bigger than its
-    // share where needed, and drawn after them (above).
-    const room = (a1 - a0) * BAND;
-    const least = node.state === 0 ? 0.25 : 0.8;
-    const thick = Math.max(least, Math.min(BAND_WIDTH, room - 0.25));
-    const cap = (thick / 2 + 0.15) / BAND;
-    let s = a0 + cap, e = a1 - cap;
-    if (e <= s) s = e = (a0 + a1) / 2;
-    const [leaf, state] = mark("path", node, here);
-    leaf.setAttribute("class", "leaf");
-    leaf.setAttribute("stroke", state.color);
-    leaf.setAttribute("stroke-width", thick);
-    // A zero-length arc draws nothing, its round caps a dot.
-    leaf.setAttribute("d", "M" + at(BAND, s) + "A" + BAND + "," + BAND + " 0 " +
-      (e - s > Math.PI ? 1 : 0) + ",1 " + at(BAND, Math.max(e, s + 1e-4)));
-    leaf.addEventListener("click", () => showDetail(leaf, node, here));
-    if (node.state !== 0) problems.push(leaf);
-  }
-
-  // Same order as the flat pie, so the inner ring reads like it.
-  const ordered = aggrs.slice().sort((a, b) =>
-    STATES.findIndex((s) => s.id === a.state) - STATES.findIndex((s) => s.id === b.state) ||
-    a.title.localeCompare(b.title));
-  const step = 2 * Math.PI / ordered.length;
-  const problems = [];
-  ordered.forEach((a, i) => draw(trees.get(a.title), i * step, (i + 1) * step, 0, []));
-  slices.append(...problems);
-  renderLabels();
-}
-
-// Names on the ring segments where they can be read: at least 8 px high in the
-// chart's current size, and whole or at least five characters before an
-// ellipsis. Straight along the radius in a narrow segment, curved along the
-// ring in a wide one, whichever shows more of the name. Again on every resize.
-function renderLabels() {
-  const group = $("labels");
-  group.replaceChildren();
-  const unit = $("chart").getBoundingClientRect().width / 42;  // px per viewBox unit
-  if (!showLabels || !unit) return;
-  labelSpots.forEach((spot, index) => {
-    const full = spot.a1 - spot.a0 >= 2 * Math.PI - 1e-9;
-    const middle = (spot.r0 + spot.r1) / 2, deep = spot.r1 - spot.r0;
-    // A full ring's name runs over its top half.
-    const a0 = full ? -Math.PI / 2 : spot.a0, a1 = full ? Math.PI / 2 : spot.a1;
-    const arc = (a1 - a0) * middle;
-    const radial = { size: Math.min(10 / unit, arc * 0.7), length: deep - 0.6, curved: false };
-    const curved = { size: Math.min(10 / unit, deep * 0.6), length: arc * 0.9, curved: true };
-    const fit = (way) => way.size * unit < 8 ? 0 : Math.floor(way.length / (way.size * 0.6));
-    const way = fit(curved) > fit(radial) ? curved : radial;
-    const chars = fit(way);
-    if (chars < Math.min(spot.name.length, 5)) return;
-    const name = spot.name.length > chars ? spot.name.slice(0, chars - 1) + "\u2026" : spot.name;
-    const angle = (a0 + a1) / 2;
-    // The group is turned by -90 degrees: a direction of r degrees in it points
-    // at r - 90 on screen, where y grows downwards.
-    const onScreen = ((angle * 180 / Math.PI - 90) % 360 + 360) % 360;
-    const text = document.createElementNS(SVG_NS, "text");
-    text.setAttribute("class", "label");
-    text.setAttribute("font-size", way.size.toFixed(3));
-    if (way.curved) {
-      // Clockwise over the top half, counter-clockwise below, so that it reads
-      // from left to right either way.
-      const below = onScreen > 0.5 && onScreen < 179.5;
-      const arcPath = document.createElementNS(SVG_NS, "path");
-      arcPath.id = "label-arc-" + index;
-      arcPath.setAttribute("fill", "none");
-      arcPath.setAttribute("d", below
-        ? "M" + at(middle, a1) + "A" + middle + "," + middle + " 0 0,0 " + at(middle, a0)
-        : "M" + at(middle, a0) + "A" + middle + "," + middle + " 0 0,1 " + at(middle, a1));
-      const along = document.createElementNS(SVG_NS, "textPath");
-      along.setAttribute("href", "#" + arcPath.id);
-      along.setAttribute("startOffset", "50%");
-      along.textContent = name;
-      text.append(along);
-      group.append(arcPath, text);
-      return;
-    }
-    // Along the radius, turned over where it would read upside down.
-    let rotation = angle * 180 / Math.PI;
-    if (onScreen > 90.5 && onScreen < 269.5) rotation += 180;
-    const [x, y] = at(middle, angle).split(",");
-    text.setAttribute("x", x);
-    text.setAttribute("y", y);
-    text.setAttribute("transform", "rotate(" + rotation.toFixed(2) + " " + x + " " + y + ")");
-    text.textContent = name;
-    group.append(text);
-  });
-}
-
-function showDetail(seg, node, path) {
-  for (const other of document.querySelectorAll("#slices .active")) other.classList.remove("active");
-  seg.classList.add("active");
-  const state = STATES.find((s) => s.id === node.state);
-  const flags = [node.acknowledged && "ack", node.inDowntime && "downtime",
-                 node.rule && "rule " + node.rule].filter(Boolean).join(", ");
-  $("detail").replaceChildren(
-    el("span", { textContent: path.join(" \u203a ") + ": " + state.label + " " }),
-    el("span", { className: "flag", textContent: flags }));
-}
-
-function render(aggrs) {
-  const total = aggrs.length;
+function countStates(aggrs) {
   const counts = new Map(STATES.map((s) => [s.id, 0]));
   for (const a of aggrs) counts.set(a.state, counts.get(a.state) + 1);
+  return counts;
+}
 
-  // Donut built from stroked circles: r is chosen so the circumference is 100,
-  // which makes dash lengths equal to percentages and handles a 100% slice.
-  const slices = $("slices");
-  slices.replaceChildren();
-  slices.classList.remove("dim");
-  $("detail").replaceChildren();
-  // A refresh replaces the element under the pointer, which would orphan the box.
-  $("tip").hidden = true;
-  $("labels").replaceChildren();
-  labelSpots = [];
-  // A small gap between slices, none for a single one.
-  const present = STATES.filter((s) => counts.get(s.id)).length;
-  const gap = present > 1 ? 0.8 : 0;
-  $("ring").style.display = total && !lastTrees ? "none" : "";
-  let offset = 0;
-  for (const s of STATES) {
-    const n = counts.get(s.id);
-    if (!n || lastTrees) continue;
-    const pct = (n / total) * 100;
-    const c = document.createElementNS(SVG_NS, "circle");
-    c.setAttribute("class", "slice" + (selected === s.id ? " active" : ""));
-    c.setAttribute("cx", 21);
-    c.setAttribute("cy", 21);
-    c.setAttribute("r", 15.9155);
-    c.setAttribute("stroke", s.color);
-    c.setAttribute("stroke-dasharray", Math.max(pct - gap, 0.1) + " " + (100 - pct + gap));
-    c.setAttribute("stroke-dashoffset", -(offset + gap / 2));
-    c.dataset.state = s.id;
-    c.setAttribute("aria-label", s.label + ": " + n + " (" + pct.toFixed(1) + " %)");
-    hoverTip(c, () => stateTip(s, aggrs));
-    c.addEventListener("click", () => select(s.id));
-    slices.append(c);
-    offset += pct;
-  }
-  if (lastTrees && total) renderTree(aggrs, lastTrees);
+// --- rendering ------------------------------------------------------------------
+
+function base() {
+  return {
+    backgroundColor: "transparent",
+    animation: animate,
+    textStyle: { fontFamily: getComputedStyle(document.body).fontFamily, color: css("--fg") },
+    tooltip: {
+      confine: true,
+      className: "tip",
+      backgroundColor: css("--tip-bg"),
+      borderColor: css("--ring"),
+      textStyle: { color: css("--fg"), fontSize: 12 },
+      extraCssText: "box-shadow: 0 2px 8px rgba(0, 0, 0, .35);",
+      formatter: (p) => (p.data && p.data.tip ? p.data.tip() : ""),
+    },
+  };
+}
+
+// Registers what a chart item stands for; its id finds it again (clicks, tests).
+function ref(entry) {
+  const id = "i" + refs.size;
+  refs.set(id, entry);
+  return id;
+}
+
+// Draws the chart and, unless only the chart changes (a legend row's fading,
+// which must not replace the row under the pointer), the legend and the list.
+function render(chartOnly) {
+  if (!last) return;
+  refs = new Map();
+  const { aggrs, trees, groups } = last;
+  const shown = TREE_VIEWS.includes(view) && !trees ? "pie" : (view === "groups" || view === "bars") && !groups
+    ? "pie" : view;
+  document.body.classList.toggle("view-pie", shown === "pie");
+  for (const v of VIEWS) if (v !== "pie") document.body.classList.toggle("view-" + v, shown === v);
+  $("chart").style.height = heightOf(shown) || "";
+  chart.resize();
+  const option = Object.assign(base(), {
+    pie: () => pieOption(aggrs),
+    rings: () => ringsOption(aggrs, trees),
+    treemap: () => treemapOption(aggrs, trees),
+    tree: () => treeOption(aggrs, trees),
+    groups: () => groupsOption(aggrs, groups),
+    bars: () => barsOption(aggrs, groups),
+  }[shown]());
+  chart.setOption(option, { notMerge: true });
+
+  const total = aggrs.length;
   $("total").textContent = total;
   $("sub").textContent = total === 1 ? "aggregation" : "aggregations";
-  // The tree view's rings reach further in, so the label sits tighter.
-  $("total").setAttribute("y", lastTrees ? 21.4 : 22.5);
-  $("sub").setAttribute("y", lastTrees ? 24.2 : 27);
-
-  // Legend: aggregations per state with their share and, in the tree view,
-  // the hosts and services per state across all loaded trees.
-  const leaves = new Map();
-  if (lastTrees) for (const tree of lastTrees.values()) leafStates(tree, leaves);
-  const head = el("tr", {}, el("th", {}), el("th", { textContent: "aggr." }), el("th", { textContent: "share" }),
-    el("th", {}));
-  if (lastTrees) head.append(el("th", { textContent: "hosts/svc" }));
-  const rows = STATES.filter((s) => counts.get(s.id) || leaves.get(s.id) || s.id >= 0 && s.id <= 2).map((s) => {
-    const share = total ? (counts.get(s.id) / total * 100).toFixed(0) + " %" : "";
-    const row = el("tr", { className: selected === s.id ? "active" : "" },
-      el("td", {}, swatch(s.color), s.label),
-      el("td", { className: "n", textContent: counts.get(s.id) }),
-      el("td", { className: "n pct", textContent: share }),
-      el("td", { className: "bar" }, bar(s, total ? counts.get(s.id) / total : 0)));
-    if (lastTrees) row.append(el("td", { className: "n", textContent: leaves.get(s.id) || 0 }));
-    row.addEventListener("click", () => select(s.id));
-    row.addEventListener("mouseenter", () => highlight(s.id));
-    row.addEventListener("mouseleave", () => highlight(null));
-    hoverTip(row, () => stateTip(s, aggrs));
-    return row;
-  });
-  $("legend").replaceChildren(el("thead", {}, head), el("tbody", {}, ...rows));
-
+  const size = $("chart").clientWidth;
+  $("total").style.fontSize = Math.round(size * (shown === "rings" ? 0.09 : 0.16)) + "px";
+  $("sub").style.fontSize = Math.max(10, Math.round(size * (shown === "rings" ? 0.032 : 0.055))) + "px";
+  if (chartOnly) return;
+  renderLegend(aggrs, trees);
   renderList(aggrs);
 }
 
-// The share as a bar in the state's color.
-function bar(state, share) {
-  const fill = el("span", { className: "fill" });
-  fill.style.width = (share * 100).toFixed(1) + "%";
-  fill.style.background = state.color;
-  return el("span", { className: "track" }, fill);
+// The height the views of many rows need, or null for the stylesheet's.
+function heightOf(shown) {
+  const { aggrs, trees, groups } = last;
+  if (shown === "groups") return groupGrid(groups.length).rows * 170 + "px";
+  if (shown === "bars") return Math.max(120, groups.length * 34 + 40) + "px";
+  if (shown === "tree") {
+    // A row per node at the unfolded depth, and per host or service above it.
+    const rows = (node, level) => (level === depth || !node.children.length ? 1
+      : node.children.reduce((sum, c) => sum + rows(c, level + 1), 0));
+    const count = aggrs.reduce((sum, a) => sum + rows(trees.get(a.title), 1), 0);
+    return Math.max(240, count * 15 + 40) + "px";
+  }
+  return null;
+}
+
+function pieOption(aggrs) {
+  const counts = countStates(aggrs);
+  const present = STATES.filter((s) => counts.get(s.id));
+  return {
+    series: [{
+      type: "pie",
+      radius: ["62%", "82%"],
+      padAngle: present.length > 1 ? 2 : 0,
+      itemStyle: { borderRadius: 3 },
+      label: { show: false },
+      emphasis: { scale: true, scaleSize: 4 },
+      data: present.map((s) => ({
+        name: s.label,
+        value: counts.get(s.id),
+        id: ref({ path: [s.label], state: s.id, kind: "state" }),
+        stateId: s.id,
+        itemStyle: { color: fill(s.id), borderColor: selected === s.id ? css("--fg") : "transparent",
+                     borderWidth: selected === s.id ? 2 : 0 },
+        tip: () => stateTip(s, aggrs),
+      })),
+    }],
+  };
+}
+
+// The BI trees as rings: the innermost one per aggregation, each further ring
+// the next level of rules, children sharing their parent's angle by the hosts
+// and services below them. The hosts and services themselves are pills in a
+// thin band around the rings, below rules of any depth: invisible spacers lift
+// a host or service that sits higher up to the band.
+function ringsOption(aggrs, trees) {
+  const list = ordered(aggrs);
+  const rings = Math.max(1, Math.min(depth, Math.max(...list.map((a) => trees.get(a.title).ruleLevels))));
+  const radius = Math.min($("chart").clientWidth, $("chart").clientHeight) / 2;
+  const inner = 0.3, outer = 0.86, step = (outer - inner) / rings;
+  const allLeaves = list.reduce((sum, a) => sum + trees.get(a.title).leaves, 0);
+  function spacer(child, from) {
+    let item = child;
+    for (let level = rings; level > from; level--) {
+      item = { name: "", value: child.value, children: [item], itemStyle: { color: "transparent", borderWidth: 0 },
+               label: { show: false }, emphasis: { disabled: true }, tooltip: { show: false }, cursor: "default" };
+    }
+    return item;
+  }
+
+  function label(node, level) {
+    if (!showLabels) return { show: false };
+    const r0 = (inner + level * step) * radius, r1 = r0 + step * radius;
+    const arc = 2 * Math.PI * node.leaves / allLeaves * (r0 + r1) / 2;
+    const deep = r1 - r0;
+    // Along the radius in a narrow segment, along the ring in a wide one.
+    const along = arc > 2.5 * deep;
+    const width = along ? arc * 0.85 : deep - 6;
+    const size = Math.min(11, Math.max(8, (along ? deep : arc) * 0.55));
+    const fits = Math.floor(width / (size * 0.6));
+    // Whole, or at least 8 characters before the ellipsis; else none.
+    if (fits < Math.min(node.name.length, 8) || (along ? deep : arc) < 9) return { show: false };
+    const dark = node.state === 0 && muted && !document.body.classList.contains("light");
+    return { show: true, rotate: along ? "tangential" : "radial", width, overflow: "truncate",
+             fontSize: size, fontWeight: 700, color: dark ? "#e8e8e8" : "#000000cc" };
+  }
+
+  function build(node, level, path) {
+    const here = path.concat(node.name);
+    if (!node.children.length) {
+      const pill = { name: node.name, value: 1, id: ref({ path: here, node, kind: node.service ? "service" : "host" }),
+                     itemStyle: { color: fill(node.state) }, label: { show: false }, tip: () => nodeTip(node, here) };
+      return [spacer(pill, level)];
+    }
+    const children = node.children.flatMap((c) => build(c, level + 1, here));
+    if (level >= rings) return children;
+    return [{
+      name: node.name,
+      id: ref({ path: here, node, kind: level === 0 ? "aggregation" : "rule" }),
+      itemStyle: { color: fill(node.state) },
+      label: label(node, level),
+      tip: () => nodeTip(node, here),
+      children,
+    }];
+  }
+
+  const data = list.flatMap((a) => build(trees.get(a.title), 0, []));
+  const levels = [{}];
+  for (let i = 0; i < rings; i++) {
+    levels.push({ r0: ((inner + i * step) * 100) + "%", r: ((inner + (i + 1) * step) * 100) + "%",
+                  itemStyle: { borderColor: css("--gap"), borderWidth: 1.5 } });
+  }
+  // The band: rounded pills with a gap between them.
+  levels.push({ r0: "90%", r: "96%", itemStyle: { borderColor: css("--gap"), borderWidth: 2, borderRadius: 6 },
+                label: { show: false } });
+  return {
+    series: [{
+      type: "sunburst",
+      data,
+      sort: null,
+      radius: ["0%", "96%"],
+      nodeClick: false,
+      emphasis: { focus: "ancestor" },
+      levels,
+    }],
+  };
+}
+
+// The BI trees as nested rectangles, sized by hosts and services; clicking one
+// zooms into it, the path above leads back.
+function treemapOption(aggrs, trees) {
+  function build(node, path) {
+    const here = path.concat(node.name);
+    const kind = path.length === 0 ? "aggregation" : node.children.length ? "rule" : node.service ? "service" : "host";
+    return {
+      name: node.name,
+      value: node.leaves,
+      id: ref({ path: here, node, kind }),
+      itemStyle: { color: fill(node.state), borderColor: fill(node.state) },
+      tip: () => nodeTip(node, here),
+      children: node.children.length ? node.children.map((c) => build(c, here)) : undefined,
+    };
+  }
+  const gap = css("--gap");
+  return {
+    series: [{
+      type: "treemap",
+      // The root of the path below the rectangles.
+      name: params.get("title") || "BI",
+      data: ordered(aggrs).map((a) => build(trees.get(a.title), [])),
+      sort: false,
+      roam: false,
+      leafDepth: depth,
+      nodeClick: "zoomToNode",
+      width: "100%",
+      height: "88%",
+      top: 0,
+      visibleMin: 30,
+      label: { show: showLabels, color: "#000", fontSize: 11, overflow: "truncate" },
+      upperLabel: { show: showLabels, height: 18, color: "#000", fontWeight: 700 },
+      breadcrumb: { show: true, bottom: 0, itemStyle: { color: css("--ring"), textStyle: { color: css("--fg") } } },
+      levels: [
+        { itemStyle: { gapWidth: 4, borderWidth: 0, borderColor: gap } },
+        { itemStyle: { gapWidth: 2, borderWidth: 2 } },
+        { itemStyle: { gapWidth: 1, borderWidth: 1 } },
+      ],
+    }],
+  };
+}
+
+// The BI trees as a tree of nodes, the aggregations at the root; nodes below
+// depth start folded, a click opens or folds one.
+function treeOption(aggrs, trees) {
+  function build(node, path) {
+    const here = path.concat(node.name);
+    const kind = path.length === 0 ? "aggregation" : node.children.length ? "rule" : node.service ? "service" : "host";
+    return {
+      name: node.name,
+      id: ref({ path: here, node, kind }),
+      itemStyle: { color: fill(node.state), borderColor: fill(node.state) },
+      tip: () => nodeTip(node, here),
+      children: node.children.map((c) => build(c, here)),
+    };
+  }
+  const counts = countStates(aggrs);
+  const root = {
+    name: params.get("title") || "BI",
+    itemStyle: { color: css("--muted"), borderColor: css("--muted") },
+    tip: () => '<div class="head">' + aggrs.length + " aggregations</div><div>" +
+      esc(stateSummary(counts)) + "</div>",
+    children: ordered(aggrs).map((a) => build(trees.get(a.title), [])),
+  };
+  return {
+    series: [{
+      type: "tree",
+      data: [root],
+      top: "4%", bottom: "4%", left: "10%", right: "22%",
+      symbolSize: 9,
+      initialTreeDepth: depth,
+      expandAndCollapse: true,
+      roam: true,
+      label: { show: showLabels, position: "left", verticalAlign: "middle", align: "right",
+               color: css("--fg"), fontSize: 11 },
+      leaves: { label: { position: "right", align: "left" } },
+      lineStyle: { color: css("--ring"), width: 1.2 },
+      emphasis: { focus: "descendant" },
+    }],
+  };
+}
+
+// The groups' aggregations, in the order of the groups.
+function groupAggrs(aggrs, group) {
+  return aggrs.filter((a) => group.titles.has(a.title));
+}
+
+// One donut per group: its OK share in the middle, its name below.
+function groupsOption(aggrs, groups) {
+  const { columns, rows } = groupGrid(groups.length);
+  const width = $("chart").clientWidth, height = $("chart").clientHeight;
+  const cellWidth = width / columns, cellHeight = height / rows;
+  const radius = Math.max(20, Math.min(cellWidth * 0.36, (cellHeight - 24) * 0.42));
+  const series = [], titles = [];
+  groups.forEach((group, i) => {
+    const mine = groupAggrs(aggrs, group);
+    const counts = countStates(mine);
+    const x = (i % columns + 0.5) * cellWidth, y = Math.floor(i / columns) * cellHeight + radius + 6;
+    const present = STATES.filter((s) => counts.get(s.id));
+    series.push({
+      type: "pie",
+      center: [x, y],
+      radius: [radius * 0.7, radius],
+      padAngle: present.length > 1 ? 2 : 0,
+      itemStyle: { borderRadius: 2 },
+      label: { show: false },
+      data: present.map((s) => ({
+        name: s.label,
+        value: counts.get(s.id),
+        id: ref({ path: [group.name, s.label], state: s.id, group: group.name, kind: "group-state" }),
+        stateId: s.id,
+        group: group.name,
+        itemStyle: { color: fill(s.id) },
+        tip: () => groupTip(group, mine),
+      })),
+    });
+    const ok = mine.length ? Math.round(counts.get(0) / mine.length * 100) : 0;
+    const size = Math.round(Math.max(12, radius * 0.32));
+    titles.push({
+      text: mine.length ? ok + " %" : "\u2013",
+      subtext: group.name,
+      left: x, top: y - size * 0.6,
+      textAlign: "center",
+      // The name under the donut.
+      itemGap: radius - size * 0.4 + 8,
+      textStyle: { color: css("--fg"), fontSize: size, fontWeight: 700 },
+      subtextStyle: { color: css("--fg"), fontSize: 12, width: cellWidth - 12, overflow: "truncate" },
+    });
+  });
+  return { title: titles, series };
+}
+
+// The donuts' grid: wider than high.
+function groupGrid(count) {
+  const columns = Math.max(1, Math.min(count, Math.ceil(Math.sqrt(count * 2.5))));
+  return { columns, rows: Math.max(1, Math.ceil(count / columns)) };
+}
+
+// One stacked bar per group, a segment per state.
+function barsOption(aggrs, groups) {
+  const per = groups.map((g) => countStates(groupAggrs(aggrs, g)));
+  return {
+    grid: { left: 8, right: 16, top: 8, bottom: 8, containLabel: true },
+    xAxis: { type: "value", minInterval: 1, axisLabel: { color: css("--muted") },
+             splitLine: { lineStyle: { color: css("--ring") } } },
+    yAxis: { type: "category", inverse: true, data: groups.map((g) => g.name),
+             axisLabel: { color: css("--fg"), width: 160, overflow: "truncate" },
+             axisLine: { lineStyle: { color: css("--ring") } }, axisTick: { show: false } },
+    series: STATES.filter((s) => per.some((c) => c.get(s.id))).map((s) => ({
+      type: "bar",
+      name: s.label,
+      stack: "states",
+      barMaxWidth: 20,
+      label: { show: showLabels, color: "#000", fontSize: 10, formatter: (p) => (p.value ? p.value : "") },
+      data: groups.map((g, i) => ({
+        value: per[i].get(s.id),
+        id: ref({ path: [g.name, s.label], state: s.id, group: g.name, kind: "group-state" }),
+        stateId: s.id,
+        group: g.name,
+        itemStyle: { color: fill(s.id), borderRadius: 2 },
+        tip: () => groupTip(g, groupAggrs(aggrs, g)),
+      })),
+    })),
+  };
+}
+
+// Legend: aggregations per state with their share and, in the views of the
+// trees, the hosts and services per state across all loaded trees.
+function renderLegend(aggrs, trees) {
+  if (!showLegend) {
+    $("legend").replaceChildren();
+    return;
+  }
+  const total = aggrs.length;
+  const counts = countStates(aggrs);
+  const leaves = new Map();
+  if (trees) for (const tree of trees.values()) leafStates(tree, leaves);
+  const head = el("tr", {}, el("th", {}), el("th", { textContent: "aggr." }), el("th", { textContent: "share" }),
+    el("th", {}));
+  if (trees) head.append(el("th", { textContent: "hosts/svc" }));
+  const rows = STATES.filter((s) => counts.get(s.id) || leaves.get(s.id) || s.id >= 0 && s.id <= 2).map((s) => {
+    const share = total ? counts.get(s.id) / total : 0;
+    const mark = el("i", {});
+    mark.style.background = s.color;
+    const fillBar = el("span", { className: "fill" });
+    fillBar.style.width = (share * 100).toFixed(1) + "%";
+    fillBar.style.background = s.color;
+    const row = el("tr", { className: selected === s.id ? "active" : "" },
+      el("td", {}, mark, s.label),
+      el("td", { className: "n", textContent: counts.get(s.id) }),
+      el("td", { className: "n pct", textContent: total ? (share * 100).toFixed(0) + " %" : "" }),
+      el("td", { className: "bar" }, el("span", { className: "track" }, fillBar)));
+    if (trees) row.append(el("td", { className: "n", textContent: leaves.get(s.id) || 0 }));
+    row.addEventListener("click", () => select(s.id, null));
+    row.addEventListener("mouseenter", () => fade(s.id));
+    row.addEventListener("mouseleave", () => fade(null));
+    row.title = s.label + ": " + counts.get(s.id) + " of " + total + " aggregations";
+    return row;
+  });
+  $("legend").replaceChildren(el("thead", {}, head), el("tbody", {}, ...rows));
 }
 
 function renderList(aggrs) {
   if (!showList) return;
+  const group = selectedGroup && last.groups && last.groups.find((g) => g.name === selectedGroup);
   const rows = aggrs
     .filter((a) => (selected === null ? a.state !== 0 : a.state === selected))
+    .filter((a) => !group || group.titles.has(a.title))
     .sort((a, b) => severity(b.state) - severity(a.state) || a.title.localeCompare(b.title));
   $("list").replaceChildren(...rows.map((a) => {
-    const s = STATES.find((x) => x.id === a.state);
+    const s = stateOf(a.state);
     const badge = el("span", { className: "badge", textContent: s.label });
     badge.style.background = s.color;
     const href = new URL("view.py", GUI_BASE);
@@ -686,14 +870,71 @@ function severity(state) {
   return { 2: 4, 3: 3, 1: 2, "-1": 1, 0: 0 }[state];
 }
 
-function select(stateId) {
-  selected = selected === stateId ? null : stateId;
-  render(lastAggrs);
+function select(stateId, group) {
+  const same = selected === stateId && selectedGroup === group;
+  selected = same ? null : stateId;
+  selectedGroup = same ? null : group;
+  render();
 }
 
+function fade(stateId) {
+  faded = stateId;
+  render(true);
+}
+
+function showDetail(entry) {
+  const node = entry.node;
+  const state = stateOf(node.state);
+  const flags = [node.acknowledged && "ack", node.inDowntime && "downtime",
+                 node.rule && "rule " + node.rule].filter(Boolean).join(", ");
+  $("detail").replaceChildren(
+    el("span", { textContent: entry.path.join(" › ") + ": " + state.label + " " }),
+    el("span", { className: "flag", textContent: flags }));
+}
+
+chart.on("click", (p) => {
+  const entry = p.data && p.data.id && refs.get(p.data.id);
+  if (!entry) return;
+  if (entry.node) showDetail(entry);
+  else select(entry.state, entry.group || null);
+});
+
+// What the chart shows, for the tests and for debugging in the browser's
+// console: each item's path, state, kind and where ECharts keeps it.
+window.biCharts = {
+  chart,
+  items() {
+    const found = [];
+    // Nothing before the chart's first drawing.
+    const model = chart.getModel();
+    if (!model) return found;
+    model.eachSeries((series) => {
+      const data = series.getData();
+      for (let i = 0; i < data.count(); i++) {
+        const entry = refs.get(data.getId(i));
+        if (!entry) continue;
+        const state = entry.node ? entry.node.state : entry.state;
+        // Faded: drawn at less than a third of its opacity (fill()).
+        const color = String(data.getItemVisual(i, "style").fill || "");
+        const alpha = color.length === 9 ? parseInt(color.slice(7), 16) / 255 : 1;
+        found.push({ path: entry.path.join(" › "), kind: entry.kind, state, color, faded: alpha < 0.3,
+                     seriesIndex: series.seriesIndex, dataIndex: i });
+      }
+    });
+    return found;
+  },
+};
+
 load();
-// The labels' size follows the chart's.
-new ResizeObserver(() => renderLabels()).observe($("chart"));
+// The chart follows the widget's size, and the labels' room with it: drawn again
+// when the chart's size changed, not for every change of the layout around it.
+let drawnSize = "";
+new ResizeObserver(() => {
+  const size = $("chart").clientWidth + "x" + $("chart").clientHeight;
+  if (size === drawnSize) return;
+  drawnSize = size;
+  render();
+}).observe($("chart"));
 const refresh = params.has("refresh") ? Number(params.get("refresh")) : 60;
 if (refresh > 0) setInterval(load, refresh * 1000);
 </script>

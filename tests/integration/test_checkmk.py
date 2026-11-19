@@ -9,6 +9,7 @@ them (several minutes); each site then takes a minute or two.
 
 import json
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 import requests
@@ -56,9 +57,14 @@ def test_package_is_enabled(site: Site) -> None:
 
 
 def test_page_is_served(site: Site) -> None:
-    response = site.gui().get(site.url + "local/bi_charts/index.html")
+    gui = site.gui()
+    response = gui.get(site.url + "local/bi_charts/index.html")
     assert response.status_code == 200
     assert "<title>BI aggregation states</title>" in response.text
+    # The chart library beside it, as JavaScript.
+    response = gui.get(site.url + "local/bi_charts/echarts.min.js")
+    assert response.status_code == 200
+    assert "javascript" in response.headers["Content-Type"]
 
 
 def test_state_endpoint_accepts_the_session_cookie(site: Site) -> None:
@@ -130,39 +136,47 @@ def _log_in(page: Page, site: Site) -> None:
     )
 
 
-def test_page_draws_the_flat_pie_in_a_browser(page: Page, site: Site) -> None:
+def _items(page: Page, kind: str) -> list[dict[str, Any]]:
+    """The chart's items of one kind (the page's hook), once there are any."""
+    page.wait_for_function(
+        "(kind) => window.biCharts && biCharts.items().some((i) => i.kind === kind)", arg=kind, timeout=60_000
+    )
+    return [i for i in page.evaluate("biCharts.items()") if i["kind"] == kind]
+
+
+def test_page_draws_the_pie_in_a_browser(page: Page, site: Site) -> None:
     _log_in(page, site)
     page.goto(site.url + "local/bi_charts/index.html")
     expect(page.locator("#msg.err")).to_have_count(0)
     expect(page.locator("#total")).to_have_text("1")
-    expect(page.locator("circle.slice")).to_have_count(1)
+    assert len(_items(page, "state")) == 1
 
 
-def test_page_draws_the_tree_in_a_browser(page: Page, site: Site) -> None:
+@pytest.mark.parametrize("view", ["rings", "treemap", "tree"])
+def test_page_draws_the_trees_in_a_browser(page: Page, site: Site, view: str) -> None:
     _log_in(page, site)
-    page.goto(site.url + "local/bi_charts/index.html?view=tree&depth=5")
+    page.goto(site.url + f"local/bi_charts/index.html?view={view}&depth=5")
     expect(page.locator("#msg.err")).to_have_count(0)
-    expect(page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]')).to_have_count(1)
-    # At least the aggregation and one rule below it, and the hosts and services
-    # below as pills in the outer band.
-    assert page.locator("path.seg").count() >= 2
-    assert page.locator(f'path.leaf[aria-label*="{MONITORED_HOST}"]').count() >= 1
-    # The only aggregation's segment is a whole ring, whose box's middle is the
-    # hole. The pointer goes to the middle of the ring itself: found along the
-    # segment's radius in its own coordinates, then taken to the screen.
-    x, y = page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]').evaluate(
-        """(seg) => {
-            const inside = [];
-            for (let r = 0; r < 21; r += 0.05) {
-                if (seg.isPointInFill(new DOMPoint(21 + r, 21))) inside.push(r);
-            }
-            const middle = (inside[0] + inside[inside.length - 1]) / 2;
-            const point = new DOMPoint(21 + middle, 21).matrixTransform(seg.getScreenCTM());
-            return [point.x, point.y];
-        }"""
+    assert [i["path"] for i in _items(page, "aggregation")] == [AGGREGATION]
+    # At least one rule below the aggregation, and the host's services below.
+    assert _items(page, "rule")
+    leaves = _items(page, "service") + [i for i in page.evaluate("biCharts.items()") if i["kind"] == "host"]
+    assert any(MONITORED_HOST in i["path"] for i in leaves)
+    # Hovering the aggregation tells its rule.
+    item = _items(page, "aggregation")[0]
+    page.evaluate(
+        "([s, d]) => biCharts.chart.dispatchAction({ type: 'showTip', seriesIndex: s, dataIndex: d })",
+        [item["seriesIndex"], item["dataIndex"]],
     )
-    page.mouse.move(x, y)
-    expect(page.locator("#tip")).to_contain_text("Rule default / host")
+    expect(page.locator(".tip")).to_contain_text("Rule default / host")
+
+
+def test_page_draws_the_groups_in_a_browser(page: Page, site: Site) -> None:
+    _log_in(page, site)
+    # Per BI pack, the default: the site's one aggregation is of the pack "default".
+    page.goto(site.url + "local/bi_charts/index.html?view=groups")
+    expect(page.locator("#msg.err")).to_have_count(0)
+    assert [i["path"].split(" › ")[0] for i in _items(page, "group-state")] == ["default"]
 
 
 def test_dashboard_shows_the_widget_in_a_browser(page: Page, site: Site) -> None:

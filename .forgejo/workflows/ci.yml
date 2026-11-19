@@ -39,9 +39,11 @@ jobs:
         uses: https://github.com/actions/checkout@v7
 
       - name: Install the test tools
+        # The chart library (package-lock.json) goes into the MKP, the tools into a venv.
         # The browser's libraries come from Ubuntu's mirrors, which do not always
         # answer (2026-11-19: every integration job of a run failed here): three tries.
         run: &install |
+          npm ci --no-audit --no-fund --ignore-scripts
           python3 -m venv .venv
           .venv/bin/pip install --quiet --disable-pip-version-check -r requirements-test.txt
           for try in 1 2 3; do
@@ -153,6 +155,9 @@ jobs:
             echo "::error::$TAG is not the version in build.py ($version)"
             exit 1
           fi
+
+      - name: Install the chart library
+        run: npm ci --no-audit --no-fund --ignore-scripts
 
       - name: Build the MKP
         run: |

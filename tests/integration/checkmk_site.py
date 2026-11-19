@@ -127,9 +127,10 @@ def _wait(site: Site, timeout: float) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            if requests.get(site.url + "login.py", timeout=5).status_code == 200:
+            if requests.get(site.url + "login.py", timeout=10).status_code == 200:
                 return
-        except requests.ConnectionError:
+        # Refused before Apache listens, slow while the site starts up.
+        except (requests.ConnectionError, requests.Timeout):
             pass
         time.sleep(3)
     raise TimeoutError(f"Checkmk {site.version} did not answer within {timeout:.0f} s")

@@ -11,7 +11,7 @@
                           'title': 'BI aggregation states',
                           'type': 'url',
                           'url': 'local/bi_charts/index.html'}],
-            'description': 'State distribution of BI aggregations as a pie chart.',
+            'description': 'States of the BI aggregations as charts.',
             'hidden': False,
             'hidebutton': False,
             'icon': None,

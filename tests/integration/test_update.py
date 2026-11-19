@@ -74,6 +74,10 @@ def test_page_still_draws_after_the_update(page: Page, updated_site: Site) -> No
     page.context.add_cookies(
         [{"name": cookie.name, "value": cookie.value, "url": updated_site.url} for cookie in gui.cookies]
     )
-    page.goto(updated_site.url + "local/bi_charts/index.html?view=tree&refresh=3")
-    expect(page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]')).to_have_count(1, timeout=120_000)
+    page.goto(updated_site.url + "local/bi_charts/index.html?view=rings&refresh=3")
+    page.wait_for_function(
+        "(title) => window.biCharts && biCharts.items().some((i) => i.kind === 'aggregation' && i.path === title)",
+        arg=AGGREGATION,
+        timeout=120_000,
+    )
     expect(page.locator("#msg.err")).to_have_count(0)
