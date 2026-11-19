@@ -143,14 +143,25 @@ def test_page_draws_the_tree_in_a_browser(page: Page, site: Site) -> None:
     page.goto(site.url + "local/bi_pie/index.html?view=tree&depth=5")
     expect(page.locator("#msg.err")).to_have_count(0)
     expect(page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]')).to_have_count(1)
-    # At least the aggregation, one rule below it and one host or service.
-    assert page.locator("path.seg").count() >= 3
-    # The only aggregation's segment is a whole ring: the middle of its box is the
-    # hole, where the total sits. Its top, just inside the outer edge, is the ring.
-    segment = page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]')
-    box = segment.bounding_box()
-    assert box
-    segment.hover(position={"x": box["width"] / 2, "y": box["height"] * 0.03})
+    # At least the aggregation and one rule below it, and the hosts and services
+    # below as pills in the outer band.
+    assert page.locator("path.seg").count() >= 2
+    assert page.locator(f'path.leaf[aria-label*="{MONITORED_HOST}"]').count() >= 1
+    # The only aggregation's segment is a whole ring, whose box's middle is the
+    # hole. The pointer goes to the middle of the ring itself: found along the
+    # segment's radius in its own coordinates, then taken to the screen.
+    x, y = page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]').evaluate(
+        """(seg) => {
+            const inside = [];
+            for (let r = 0; r < 21; r += 0.05) {
+                if (seg.isPointInFill(new DOMPoint(21 + r, 21))) inside.push(r);
+            }
+            const middle = (inside[0] + inside[inside.length - 1]) / 2;
+            const point = new DOMPoint(21 + middle, 21).matrixTransform(seg.getScreenCTM());
+            return [point.x, point.y];
+        }"""
+    )
+    page.mouse.move(x, y)
     expect(page.locator("#tip")).to_contain_text("Rule default / host")
 
 

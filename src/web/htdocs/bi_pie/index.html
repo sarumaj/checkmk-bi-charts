@@ -16,11 +16,17 @@
     list=0                      hide the list of non-OK aggregations
     debug=1                     dump the raw REST response
     view=tree                   layered view: one ring per level of the BI tree
-    depth=<rings>               tree view: number of rings, default 3
+    depth=<rings>               tree view: number of rule rings, default 3
     max=<count>                 tree view: most aggregations to load, default 40
+    labels=0                    tree view: no names on the ring segments
 
-  Hovering a slice, a ring segment or a legend row shows its details; hovering
-  a legend row also fades everything of another state.
+  The tree view draws the rules of each aggregation's tree as rings, the
+  innermost one per aggregation, and every host and service below them as a
+  pill in a thin outer band, however deep it sits. Segments wide enough carry
+  their name. OK is drawn paler than the problem states, which stand out.
+
+  Hovering a slice, a ring segment, a pill or a legend row shows its details;
+  hovering a legend row also fades everything of another state.
 
   The aggregation states come from the REST API. The tree view additionally
   loads each aggregation's full tree from ajax_fetch_aggregation_data.py, the
@@ -42,17 +48,25 @@
   #wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; flex: 0 0 auto; }
   svg { width: min(45vw, 60vh, 220px); height: auto; flex: 0 0 auto; }
   circle.slice { fill: none; stroke-width: 6; cursor: pointer; transition: stroke-width .15s; }
+  /* OK paler than the problem states, so that those stand out. */
+  circle.slice[data-state="0"], path.leaf[data-state="0"] { stroke-opacity: .55; }
+  path.seg[data-state="0"] { fill-opacity: .55; }
   circle.slice:hover, circle.slice.active { stroke-width: 8; }
   circle.ring { fill: none; stroke: var(--ring); stroke-width: 6; }
   text.total { font-size: 8px; font-weight: 700; fill: var(--fg); text-anchor: middle; }
   text.sub { font-size: 3px; fill: var(--muted); text-anchor: middle; }
   /* Tree view: rings reach further in, so the centre label shrinks. */
-  body.tree svg { width: min(55vw, 75vh, 300px); }
+  body.tree svg { width: min(60vw, 80vh, 420px); }
   body.tree circle.ring { display: none; }
   body.tree text.total { font-size: 5px; }
   body.tree text.sub { font-size: 2px; }
-  path.seg { stroke: var(--gap); stroke-width: .2; cursor: pointer; }
+  path.seg { stroke: var(--gap); stroke-width: .35; cursor: pointer; }
   path.seg:hover, path.seg.active { opacity: .75; }
+  path.leaf { fill: none; stroke-linecap: round; cursor: pointer; }
+  path.leaf:hover { opacity: .75; }
+  /* Names along the radius; the pointer goes through to the segment. */
+  text.label { fill: #000; fill-opacity: .8; font-weight: 700; text-anchor: middle;
+               dominant-baseline: central; pointer-events: none; }
   #detail { margin-top: 6px; min-height: 1.4em; }
   #detail .flag { color: var(--muted); font-size: 11px; }
   #legend { border-collapse: collapse; }
@@ -65,6 +79,10 @@
               margin-right: 6px; }
   #legend td.n { text-align: right; padding-left: 14px; font-variant-numeric: tabular-nums; }
   #legend td.pct { color: var(--muted); }
+  #legend td.bar { padding-left: 8px; }
+  #legend .track { display: inline-block; width: 48px; height: 5px; border-radius: 3px;
+                   background: var(--ring); overflow: hidden; vertical-align: middle; }
+  #legend .fill { display: block; height: 100%; }
   /* While a legend row is hovered, everything of another state fades. */
   #slices.dim > :not(.hl) { opacity: .2; }
   #tip { position: fixed; z-index: 10; pointer-events: none; max-width: min(320px, 90vw);
@@ -90,9 +108,10 @@
 <body>
 <h1 id="title" hidden></h1>
 <div id="wrap">
-  <svg viewBox="0 0 42 42" role="img" aria-label="BI aggregation states">
-    <circle class="ring" cx="21" cy="21" r="15.9155"/>
+  <svg id="chart" viewBox="0 0 42 42" role="img" aria-label="BI aggregation states">
+    <circle class="ring" id="ring" cx="21" cy="21" r="15.9155"/>
     <g id="slices" transform="rotate(-90 21 21)"></g>
+    <g id="labels" transform="rotate(-90 21 21)"></g>
     <text class="total" x="21" y="22.5" id="total"></text>
     <text class="sub" x="21" y="27" id="sub">aggregations</text>
   </svg>
@@ -128,12 +147,14 @@ for (const g of params.getAll("group")) API_URL.searchParams.append("filter_grou
 for (const n of params.getAll("name")) API_URL.searchParams.append("filter_names", n);
 
 const showList = params.get("list") !== "0";
+const showLabels = params.get("labels") !== "0";
 const treeView = params.get("view") === "tree";
 const depth = positiveInt("depth", 3);      // rings drawn in the tree view
 const maxTrees = positiveInt("max", 40);    // one request per aggregation and refresh
 let selected = null;   // state id the list is narrowed to, or null for all non-OK
 let lastAggrs = [];
 let lastTrees = null;  // Map of aggregation title -> tree, or null for the flat pie
+let labelSpots = [];   // ring segments that may carry their name: {name, r0, r1, a0, a1}
 
 function positiveInt(name, fallback) {
   if (!params.has(name)) return fallback;
@@ -177,7 +198,8 @@ function theme() {
 function fail(text) {
   lastAggrs = [];
   lastTrees = null;
-  for (const id of ["slices", "legend", "list", "detail"]) $(id).replaceChildren();
+  labelSpots = [];
+  for (const id of ["slices", "labels", "legend", "list", "detail"]) $(id).replaceChildren();
   $("total").textContent = "?";
   $("tip").hidden = true;
   message(text, true);
@@ -391,8 +413,13 @@ function highlight(stateId) {
   }
 }
 
-// Ring segment between two radii and two angles (radians, clockwise from the
-// group's zero direction, which the rotated <g> points to twelve o'clock).
+// Point at radius r and angle a (radians, clockwise from the group's zero
+// direction, which the rotated <g> points to twelve o'clock), as "x,y".
+function at(r, a) {
+  return (21 + r * Math.cos(a)).toFixed(3) + "," + (21 + r * Math.sin(a)).toFixed(3);
+}
+
+// Ring segment between two radii and two angles.
 function segmentPath(r0, r1, a0, a1) {
   if (a1 - a0 >= 2 * Math.PI - 1e-9) {
     // An arc cannot span a full circle, so draw two circles and cut the inner out.
@@ -400,34 +427,50 @@ function segmentPath(r0, r1, a0, a1) {
       r + "," + r + " 0 1,0 " + -2 * r + ",0Z";
     return circle(r1) + circle(r0);
   }
-  const at = (r, a) => (21 + r * Math.cos(a)).toFixed(3) + "," + (21 + r * Math.sin(a)).toFixed(3);
   const large = a1 - a0 > Math.PI ? 1 : 0;
   return "M" + at(r1, a0) + "A" + r1 + "," + r1 + " 0 " + large + ",1 " + at(r1, a1) +
     "L" + at(r0, a1) + "A" + r0 + "," + r0 + " 0 " + large + ",0 " + at(r0, a0) + "Z";
 }
 
+// The tree view's radii: the rule rings, then the band of hosts and services.
+const INNER = 7.5, RULES_OUTER = 18.3, BAND = 19.7, BAND_WIDTH = 1.3;
+
 // Layered view: ring 1 holds one equal segment per aggregation, each further
-// ring the next tree level, with children sharing their parent's angle by the
-// number of hosts and services below them.
+// ring the next level of rules, with children sharing their parent's angle by
+// the number of hosts and services below them. The hosts and services
+// themselves are pills in the outer band, below rules of any depth.
 function renderTree(aggrs, trees) {
-  const inner = 7.5, outer = 20.5, width = (outer - inner) / depth;
+  const width = (RULES_OUTER - INNER) / depth;
   const slices = $("slices");
   slices.replaceChildren();
+  labelSpots = [];
+
+  function mark(tag, node, here) {
+    const state = STATES.find((s) => s.id === node.state);
+    const shape = document.createElementNS(SVG_NS, tag);
+    shape.dataset.state = node.state;
+    shape.setAttribute("aria-label", here.join(" \u203a ") + ": " + state.label);
+    hoverTip(shape, () => nodeTip(node, here));
+    slices.append(shape);
+    return [shape, state];
+  }
 
   function draw(node, a0, a1, level, path) {
-    if (level >= depth) return;
     const here = path.concat(node.name);
-    const state = STATES.find((s) => s.id === node.state);
-    const seg = document.createElementNS(SVG_NS, "path");
-    seg.setAttribute("class", "seg");
-    seg.setAttribute("fill", state.color);
-    seg.setAttribute("fill-rule", "evenodd");
-    seg.setAttribute("d", segmentPath(inner + level * width, inner + (level + 1) * width, a0, a1));
-    seg.dataset.state = node.state;
-    seg.setAttribute("aria-label", here.join(" \u203a ") + ": " + state.label);
-    hoverTip(seg, () => nodeTip(node, here));
-    seg.addEventListener("click", () => showDetail(seg, node, here));
-    slices.append(seg);
+    if (!node.children.length) {
+      pill(node, a0, a1, here);
+      return;
+    }
+    if (level < depth) {
+      const r0 = INNER + level * width, r1 = r0 + width;
+      const [seg, state] = mark("path", node, here);
+      seg.setAttribute("class", "seg");
+      seg.setAttribute("fill", state.color);
+      seg.setAttribute("fill-rule", "evenodd");
+      seg.setAttribute("d", segmentPath(r0, r1, a0, a1));
+      seg.addEventListener("click", () => showDetail(seg, node, here));
+      labelSpots.push({ name: node.name, r0, r1, a0, a1 });
+    }
     let start = a0;
     for (const child of node.children) {
       const end = start + (a1 - a0) * child.leaves / node.leaves;
@@ -436,16 +479,100 @@ function renderTree(aggrs, trees) {
     }
   }
 
+  // A host or service: an arc with round ends in the band, a dot where its
+  // angle is too small for more, with a gap to its neighbours.
+  function pill(node, a0, a1, here) {
+    // A problem stays visible among hundreds of OK pills: bigger than its
+    // share where needed, and drawn after them (above).
+    const room = (a1 - a0) * BAND;
+    const least = node.state === 0 ? 0.25 : 0.8;
+    const thick = Math.max(least, Math.min(BAND_WIDTH, room - 0.25));
+    const cap = (thick / 2 + 0.15) / BAND;
+    let s = a0 + cap, e = a1 - cap;
+    if (e <= s) s = e = (a0 + a1) / 2;
+    const [leaf, state] = mark("path", node, here);
+    leaf.setAttribute("class", "leaf");
+    leaf.setAttribute("stroke", state.color);
+    leaf.setAttribute("stroke-width", thick);
+    // A zero-length arc draws nothing, its round caps a dot.
+    leaf.setAttribute("d", "M" + at(BAND, s) + "A" + BAND + "," + BAND + " 0 " +
+      (e - s > Math.PI ? 1 : 0) + ",1 " + at(BAND, Math.max(e, s + 1e-4)));
+    leaf.addEventListener("click", () => showDetail(leaf, node, here));
+    if (node.state !== 0) problems.push(leaf);
+  }
+
   // Same order as the flat pie, so the inner ring reads like it.
   const ordered = aggrs.slice().sort((a, b) =>
     STATES.findIndex((s) => s.id === a.state) - STATES.findIndex((s) => s.id === b.state) ||
     a.title.localeCompare(b.title));
   const step = 2 * Math.PI / ordered.length;
+  const problems = [];
   ordered.forEach((a, i) => draw(trees.get(a.title), i * step, (i + 1) * step, 0, []));
+  slices.append(...problems);
+  renderLabels();
+}
+
+// Names on the ring segments where they can be read: at least 8 px high in the
+// chart's current size, and whole or at least five characters before an
+// ellipsis. Straight along the radius in a narrow segment, curved along the
+// ring in a wide one, whichever shows more of the name. Again on every resize.
+function renderLabels() {
+  const group = $("labels");
+  group.replaceChildren();
+  const unit = $("chart").getBoundingClientRect().width / 42;  // px per viewBox unit
+  if (!showLabels || !unit) return;
+  labelSpots.forEach((spot, index) => {
+    const full = spot.a1 - spot.a0 >= 2 * Math.PI - 1e-9;
+    const middle = (spot.r0 + spot.r1) / 2, deep = spot.r1 - spot.r0;
+    // A full ring's name runs over its top half.
+    const a0 = full ? -Math.PI / 2 : spot.a0, a1 = full ? Math.PI / 2 : spot.a1;
+    const arc = (a1 - a0) * middle;
+    const radial = { size: Math.min(10 / unit, arc * 0.7), length: deep - 0.6, curved: false };
+    const curved = { size: Math.min(10 / unit, deep * 0.6), length: arc * 0.9, curved: true };
+    const fit = (way) => way.size * unit < 8 ? 0 : Math.floor(way.length / (way.size * 0.6));
+    const way = fit(curved) > fit(radial) ? curved : radial;
+    const chars = fit(way);
+    if (chars < Math.min(spot.name.length, 5)) return;
+    const name = spot.name.length > chars ? spot.name.slice(0, chars - 1) + "\u2026" : spot.name;
+    const angle = (a0 + a1) / 2;
+    // The group is turned by -90 degrees: a direction of r degrees in it points
+    // at r - 90 on screen, where y grows downwards.
+    const onScreen = ((angle * 180 / Math.PI - 90) % 360 + 360) % 360;
+    const text = document.createElementNS(SVG_NS, "text");
+    text.setAttribute("class", "label");
+    text.setAttribute("font-size", way.size.toFixed(3));
+    if (way.curved) {
+      // Clockwise over the top half, counter-clockwise below, so that it reads
+      // from left to right either way.
+      const below = onScreen > 0.5 && onScreen < 179.5;
+      const arcPath = document.createElementNS(SVG_NS, "path");
+      arcPath.id = "label-arc-" + index;
+      arcPath.setAttribute("fill", "none");
+      arcPath.setAttribute("d", below
+        ? "M" + at(middle, a1) + "A" + middle + "," + middle + " 0 0,0 " + at(middle, a0)
+        : "M" + at(middle, a0) + "A" + middle + "," + middle + " 0 0,1 " + at(middle, a1));
+      const along = document.createElementNS(SVG_NS, "textPath");
+      along.setAttribute("href", "#" + arcPath.id);
+      along.setAttribute("startOffset", "50%");
+      along.textContent = name;
+      text.append(along);
+      group.append(arcPath, text);
+      return;
+    }
+    // Along the radius, turned over where it would read upside down.
+    let rotation = angle * 180 / Math.PI;
+    if (onScreen > 90.5 && onScreen < 269.5) rotation += 180;
+    const [x, y] = at(middle, angle).split(",");
+    text.setAttribute("x", x);
+    text.setAttribute("y", y);
+    text.setAttribute("transform", "rotate(" + rotation.toFixed(2) + " " + x + " " + y + ")");
+    text.textContent = name;
+    group.append(text);
+  });
 }
 
 function showDetail(seg, node, path) {
-  for (const other of document.querySelectorAll("path.seg.active")) other.classList.remove("active");
+  for (const other of document.querySelectorAll("#slices .active")) other.classList.remove("active");
   seg.classList.add("active");
   const state = STATES.find((s) => s.id === node.state);
   const flags = [node.acknowledged && "ack", node.inDowntime && "downtime",
@@ -468,6 +595,12 @@ function render(aggrs) {
   $("detail").replaceChildren();
   // A refresh replaces the element under the pointer, which would orphan the box.
   $("tip").hidden = true;
+  $("labels").replaceChildren();
+  labelSpots = [];
+  // A small gap between slices, none for a single one.
+  const present = STATES.filter((s) => counts.get(s.id)).length;
+  const gap = present > 1 ? 0.8 : 0;
+  $("ring").style.display = total && !lastTrees ? "none" : "";
   let offset = 0;
   for (const s of STATES) {
     const n = counts.get(s.id);
@@ -479,8 +612,8 @@ function render(aggrs) {
     c.setAttribute("cy", 21);
     c.setAttribute("r", 15.9155);
     c.setAttribute("stroke", s.color);
-    c.setAttribute("stroke-dasharray", pct + " " + (100 - pct));
-    c.setAttribute("stroke-dashoffset", -offset);
+    c.setAttribute("stroke-dasharray", Math.max(pct - gap, 0.1) + " " + (100 - pct + gap));
+    c.setAttribute("stroke-dashoffset", -(offset + gap / 2));
     c.dataset.state = s.id;
     c.setAttribute("aria-label", s.label + ": " + n + " (" + pct.toFixed(1) + " %)");
     hoverTip(c, () => stateTip(s, aggrs));
@@ -499,14 +632,16 @@ function render(aggrs) {
   // the hosts and services per state across all loaded trees.
   const leaves = new Map();
   if (lastTrees) for (const tree of lastTrees.values()) leafStates(tree, leaves);
-  const head = el("tr", {}, el("th", {}), el("th", { textContent: "aggr." }), el("th", { textContent: "share" }));
+  const head = el("tr", {}, el("th", {}), el("th", { textContent: "aggr." }), el("th", { textContent: "share" }),
+    el("th", {}));
   if (lastTrees) head.append(el("th", { textContent: "hosts/svc" }));
   const rows = STATES.filter((s) => counts.get(s.id) || leaves.get(s.id) || s.id >= 0 && s.id <= 2).map((s) => {
     const share = total ? (counts.get(s.id) / total * 100).toFixed(0) + " %" : "";
     const row = el("tr", { className: selected === s.id ? "active" : "" },
       el("td", {}, swatch(s.color), s.label),
       el("td", { className: "n", textContent: counts.get(s.id) }),
-      el("td", { className: "n pct", textContent: share }));
+      el("td", { className: "n pct", textContent: share }),
+      el("td", { className: "bar" }, bar(s, total ? counts.get(s.id) / total : 0)));
     if (lastTrees) row.append(el("td", { className: "n", textContent: leaves.get(s.id) || 0 }));
     row.addEventListener("click", () => select(s.id));
     row.addEventListener("mouseenter", () => highlight(s.id));
@@ -517,6 +652,14 @@ function render(aggrs) {
   $("legend").replaceChildren(el("thead", {}, head), el("tbody", {}, ...rows));
 
   renderList(aggrs);
+}
+
+// The share as a bar in the state's color.
+function bar(state, share) {
+  const fill = el("span", { className: "fill" });
+  fill.style.width = (share * 100).toFixed(1) + "%";
+  fill.style.background = state.color;
+  return el("span", { className: "track" }, fill);
 }
 
 function renderList(aggrs) {
@@ -549,6 +692,8 @@ function select(stateId) {
 }
 
 load();
+// The labels' size follows the chart's.
+new ResizeObserver(() => renderLabels()).observe($("chart"));
 const refresh = params.has("refresh") ? Number(params.get("refresh")) : 60;
 if (refresh > 0) setInterval(load, refresh * 1000);
 </script>

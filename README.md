@@ -13,7 +13,8 @@ so this package embeds a small static page instead.
 
 ![Hover details with sample data](docs/screenshot-hover.png)
 
-*All rendered from the page with sample data, not taken from a live site.*
+*All rendered from the page with sample data by `tools/screenshots.py`, not
+taken from a live site.*
 
 ## Requirements
 
@@ -60,8 +61,9 @@ local/bi_pie/index.html?group=WebApp&title=Web%20applications
 | `list=0`  | Hide the list of non-OK aggregations |
 | `debug=1` | Show the raw REST API response |
 | `view=tree` | Layered view, see below |
-| `depth`   | Layered view: number of rings, default 3 |
+| `depth`   | Layered view: number of rule rings, default 3 |
 | `max`     | Layered view: most aggregations to load, default 40 |
+| `labels=0` | Layered view: no names on the ring segments |
 
 Clicking a slice or a legend row narrows the list to that state. Each entry
 links to the aggregation's BI view.
@@ -73,14 +75,18 @@ Hovering shows a details box next to the pointer:
 - **Slice or legend row:** the state's count and share, and the aggregations in
   that state with their acknowledged / downtime flags (the first eight, then a
   count of the rest).
-- **Ring segment (layered view):** the path down to the node, its state and
-  flags, whether it is a rule (with BI pack and rule ID), a host or a service,
-  and how many hosts and services sit below it per state.
+- **Ring segment or pill (layered view):** the path down to the node, its state
+  and flags, whether it is a rule (with BI pack and rule ID), a host or a
+  service, and how many hosts and services sit below it per state.
 
 Hovering a legend row also fades every slice and segment of another state.
 
-The legend lists each state's aggregation count and share. In the layered view
-it adds a column with the hosts and services per state across all loaded trees.
+The legend lists each state's aggregation count and share, the share also as a
+bar. In the layered view it adds a column with the hosts and services per state
+across all loaded trees.
+
+OK is drawn paler than the problem states, and small gaps separate the slices
+and segments, so that problems stand out.
 
 ## Layered view
 
@@ -90,11 +96,19 @@ local/bi_pie/index.html?view=tree&depth=4&name=Payment%20API
 ```
 
 The innermost ring holds one equal segment per aggregation, in the same order
-as the flat pie. Each further ring is the next level of the BI tree: the rules
-an aggregation is built from, the rules those call (also across BI packs), and
-finally hosts and services. Children share their parent's angle by the number
-of hosts and services below them, and every segment has the color of its own
-state, so a problem can be followed from the outside in.
+as the flat pie. Each further ring, up to `depth`, is the next level of rules:
+the rules an aggregation is built from and the rules those call (also across
+BI packs). Children share their parent's angle by the number of hosts and
+services below them. Every host and service is a pill in a thin band around
+the rings, however deep it sits in the tree, so the band shows every problem
+even when the rings stop early; a problem pill stays visible among hundreds of
+OK ones. Every segment and pill has the color of its own state, so a problem
+can be followed from the outside in.
+
+A segment wide enough carries its name: straight along the radius in a narrow
+segment, curved along the ring in a wide one, never upside down. A name is
+left out where it would be smaller than 8 pixels or cut to fewer than five
+characters, so how many names show depends on the widget's size.
 
 Clicking a segment keeps its path, state and, for rules, the BI pack and rule
 ID on display below the chart.

@@ -52,14 +52,56 @@ def test_click_on_legend_row_narrows_the_list(page: Page, stub: Stub) -> None:
         # 6 aggregations, each with 2 host rules of 2 services.
         pytest.param(1, 6, id="aggregations only"),
         pytest.param(2, 18, id="plus host rules"),
-        pytest.param(3, 42, id="plus services"),
-        pytest.param(5, 42, id="deeper than the trees"),
+        pytest.param(5, 18, id="deeper than the rules"),
     ],
 )
-def test_tree_view_draws_one_ring_per_level(page: Page, stub: Stub, depth: int, segments: int) -> None:
+def test_tree_view_draws_one_ring_per_rule_level(page: Page, stub: Stub, depth: int, segments: int) -> None:
     page.goto(f"{stub.page}?view=tree&depth={depth}")
     expect(page.locator("path.seg")).to_have_count(segments)
+    # Every service is a pill in the outer band, however few rings are drawn.
+    expect(page.locator("path.leaf")).to_have_count(24)
     expect(page.locator("circle.slice")).to_have_count(0)
+
+
+def test_pills_have_the_state_of_their_service(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=tree&depth=1")
+    expect(page.locator('path.leaf[data-state="2"]')).to_have_count(1)
+    expect(page.locator('path.leaf[aria-label="Payment › Payment-1 › Payment-1 CPU: CRIT"]')).to_have_count(1)
+
+
+def test_wide_segments_carry_their_name(page: Page, stub: Stub) -> None:
+    page.set_viewport_size({"width": 900, "height": 700})
+    page.goto(stub.page + "?view=tree&depth=2")
+    expect(page.locator("text.label").first).to_be_attached()
+    names = page.locator("text.label").all_text_contents()
+    assert {"Payment", "ERP"} <= set(names), names
+    # A name cut short keeps at least five characters before its ellipsis.
+    assert all(not name.endswith("…") or len(name) >= 6 for name in names), names
+    # No name upside down: on screen, each one's reading direction points right
+    # (or straight up or down, where both are readable).
+    directions = page.locator("text.label").evaluate_all("(ts) => ts.map((t) => t.getScreenCTM().a)")
+    assert directions and all(a > -0.01 for a in directions), directions
+
+
+def test_labels_can_be_turned_off(page: Page, stub: Stub) -> None:
+    page.set_viewport_size({"width": 900, "height": 700})
+    page.goto(stub.page + "?view=tree&labels=0")
+    expect(page.locator("path.seg")).to_have_count(18)
+    expect(page.locator("text.label")).to_have_count(0)
+
+
+def test_labels_leave_out_what_would_be_unreadable(page: Page, stub: Stub) -> None:
+    page.set_viewport_size({"width": 200, "height": 200})
+    page.goto(stub.page + "?view=tree&depth=3")
+    expect(page.locator("path.seg")).to_have_count(18)
+    expect(page.locator("text.label")).to_have_count(0)
+
+
+def test_legend_bars_show_the_shares(page: Page, stub: Stub) -> None:
+    page.goto(stub.page)
+    expect(page.locator("#legend .fill")).to_have_count(4)
+    widths = page.locator("#legend .fill").evaluate_all("(fills) => fills.map((f) => parseFloat(f.style.width))")
+    assert widths == [50, 16.7, 16.7, 16.7]
 
 
 def test_tree_view_legend_counts_hosts_and_services(page: Page, stub: Stub) -> None:
@@ -92,7 +134,7 @@ def test_tree_view_legend_counts_hosts_and_services(page: Page, stub: Stub) -> N
 )
 def test_hover_on_segment_shows_its_details(page: Page, stub: Stub, label: str, expected: list[str]) -> None:
     page.goto(stub.page + "?view=tree")
-    page.locator(f'path.seg[aria-label="{label}"]').hover()
+    page.locator(f'[aria-label="{label}"]').hover()
     expect(page.locator("#tip")).to_be_visible()
     for line in expected:
         expect(page.locator("#tip")).to_contain_text(line)
