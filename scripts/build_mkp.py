@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Build the bi_charts MKP from the files under src/.
 
-    ./build.py            # writes dist/bi_charts-<version>.mkp
+    build-mkp             # writes dist/bi_charts-<version>.mkp
+    build-mkp --version   # prints the version (pyproject.toml's)
+
+``build-mkp`` is this module's entry point once the project is installed
+(``pip install -e .``); ``python3 scripts/build_mkp.py`` does the same without.
 
 An MKP is a gzipped tar holding the manifest twice (``info`` as a Python
 literal, ``info.json`` for external tools) and one uncompressed tar per package
@@ -13,18 +17,22 @@ Building here instead of with ``mkp package`` needs no Checkmk site and gives a
 byte-identical archive for identical sources.
 """
 
+import argparse
 import gzip
 import io
 import json
 import pprint
 import tarfile
+import tomllib
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+# The checkout: an editable install (pip install -e .) runs this file where it lies.
+ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 
 NAME = "bi_charts"
-VERSION = "0.1.0"
+# The project's version, which the release bot writes (pyproject.toml, tool.commitizen).
+VERSION: str = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
 
 # Part name -> files, relative to the part's directory in the site:
 #   web  ~/local/share/check_mk/web
@@ -116,5 +124,14 @@ def build() -> Path:
     return target
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Build the bi_charts MKP into dist/.")
+    parser.add_argument("--version", action="store_true", help="print the version and build nothing")
+    if parser.parse_args().version:
+        print(VERSION)
+    else:
+        print(build())
+
+
 if __name__ == "__main__":
-    print(build())
+    main()

@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).parent.parent.parent
 PAGE = ROOT / "src/web/htdocs/bi_charts/index.html"
-# The chart library, which the MKP ships beside the page (build.py; npm ci).
+# The chart library, which the MKP ships beside the page (scripts/build_mkp.py; npm ci).
 ECHARTS = ROOT / "node_modules/echarts/dist/echarts.min.js"
 
 # Aggregation title -> (state, acknowledged, in downtime, BI group).

@@ -12,7 +12,6 @@ import hashlib
 import os
 import shutil
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from functools import cache
@@ -23,11 +22,8 @@ import testinfra
 from testinfra.backend.base import CommandResult
 from testinfra.host import Host
 
-ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(ROOT))
-
-import build  # noqa: E402
-import packages  # noqa: E402
+import build_mkp
+import packages
 
 SITE = "cmk"
 USER = "cmkadmin"
@@ -185,10 +181,10 @@ def update(site: Site, version: str) -> None:
 
 
 def install_package(site: Site) -> None:
-    mkp = build.build()
+    mkp = build_mkp.build()
     _docker("cp", str(mkp), f"{site.container}:/tmp/{mkp.name}")
     site.host.run_test("chmod 644 /tmp/%s", mkp.name)
-    for command in (f"mkp add /tmp/{mkp.name}", f"mkp enable {build.NAME} {build.VERSION}"):
+    for command in (f"mkp add /tmp/{mkp.name}", f"mkp enable {build_mkp.NAME} {build_mkp.VERSION}"):
         result = site.run(command)
         assert result.rc == 0, f"{command}: {result.stdout}{result.stderr}"
 

@@ -3,16 +3,14 @@
 import ast
 import io
 import json
-import sys
 import tarfile
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(ROOT))
+import build_mkp
 
-import build  # noqa: E402
+ROOT = Path(__file__).parent.parent.parent
 
 
 @pytest.mark.parametrize(
@@ -54,7 +52,7 @@ def test_dashboard_embeds_the_page_site_relative() -> None:
     ],
 )
 def test_mkp_parts_hold_the_manifest_files(part: str, expected: list[str]) -> None:
-    with tarfile.open(build.build()) as mkp:
+    with tarfile.open(build_mkp.build()) as mkp:
         manifest = ast.literal_eval(mkp.extractfile("info").read().decode())
         with tarfile.open(fileobj=io.BytesIO(mkp.extractfile(f"{part}.tar").read())) as inner:
             assert inner.getnames() == expected
@@ -62,7 +60,7 @@ def test_mkp_parts_hold_the_manifest_files(part: str, expected: list[str]) -> No
 
 
 def test_mkp_manifests_agree() -> None:
-    with tarfile.open(build.build()) as mkp:
+    with tarfile.open(build_mkp.build()) as mkp:
         assert mkp.getnames() == ["info", "info.json", "web.tar", "gui.tar"]
         python_manifest = ast.literal_eval(mkp.extractfile("info").read().decode())
         json_manifest = json.loads(mkp.extractfile("info.json").read())
@@ -71,11 +69,11 @@ def test_mkp_manifests_agree() -> None:
 
 
 def test_build_is_reproducible() -> None:
-    assert build.build().read_bytes() == build.build().read_bytes()
+    assert build_mkp.build().read_bytes() == build_mkp.build().read_bytes()
 
 
 def test_mkp_ships_the_chart_library_with_its_licenses() -> None:
-    with tarfile.open(build.build()) as mkp:
+    with tarfile.open(build_mkp.build()) as mkp:
         with tarfile.open(fileobj=io.BytesIO(mkp.extractfile("web.tar").read())) as web:
             library = web.extractfile("htdocs/bi_charts/echarts.min.js").read()
             notice = web.extractfile("htdocs/bi_charts/NOTICE-echarts.txt").read()
