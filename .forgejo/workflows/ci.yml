@@ -39,10 +39,18 @@ jobs:
         uses: https://github.com/actions/checkout@v7
 
       - name: Install the test tools
+        # The browser's libraries come from Ubuntu's mirrors, which do not always
+        # answer (2026-11-19: every integration job of a run failed here): three tries.
         run: &install |
           python3 -m venv .venv
           .venv/bin/pip install --quiet --disable-pip-version-check -r requirements-test.txt
-          .venv/bin/playwright install --with-deps chromium > /dev/null
+          for try in 1 2 3; do
+            .venv/bin/playwright install --with-deps chromium > /tmp/playwright.log 2>&1 && break
+            tail -5 /tmp/playwright.log
+            if [ "$try" = 3 ]; then exit 1; fi
+            echo "::warning::Installing the browser failed (try $try of 3), trying again in a minute"
+            sleep 60
+          done
 
       # Checkmk's current versions (stable_downloads.json) against the matrix below
       # and the manifest's range: the weekly run fails when Checkmk releases a new
