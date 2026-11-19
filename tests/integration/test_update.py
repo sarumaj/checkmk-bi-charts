@@ -2,12 +2,10 @@
 
     pytest tests/integration/test_update.py
 
-Installs the package on 2.4, then starts 2.5 on the same volume, which makes
-the image's entrypoint run ``omd update``.
+Installs the package on a 2.4 site, then updates the site to 2.5 with
+``omd update``, as an administrator would.
 """
 
-import subprocess
-import uuid
 from collections.abc import Iterator
 
 import pytest
@@ -20,22 +18,14 @@ from checkmk_site import AGGREGATION, SITE, STATE_ENDPOINT, Site
 
 @pytest.fixture(scope="module")
 def updated_site() -> Iterator[Site]:
-    volume = f"bi-pie-update-{uuid.uuid4().hex[:8]}"
-    subprocess.run(["docker", "volume", "create", volume], check=True, capture_output=True)
+    site = checkmk_site.start("2.4")
     try:
-        old = checkmk_site.start("2.4", volume)
-        try:
-            checkmk_site.install_package(old)
-            checkmk_site.prepare_monitoring(old)
-        finally:
-            old.stop()
-        new = checkmk_site.start("2.5", volume)
-        try:
-            yield new
-        finally:
-            new.stop()
+        checkmk_site.install_package(site)
+        checkmk_site.prepare_monitoring(site)
+        checkmk_site.update(site, "2.5")
+        yield site
     finally:
-        subprocess.run(["docker", "volume", "rm", "--force", volume], check=True, capture_output=True)
+        site.stop()
 
 
 def test_site_runs_the_new_version(updated_site: Site) -> None:

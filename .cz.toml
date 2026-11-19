@@ -1,0 +1,12 @@
+# The release bot (release-bot on git.ciepiela.org) tags the releases due from the
+# Conventional Commits since the last tag and writes CHANGELOG.md; cz works locally too.
+# It writes the version into build.py (the MKP's manifest) and the install commands of
+# README.md; the tag then publishes the MKP (.forgejo/workflows/release.yml).
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version = "0.4.0"
+version_provider = "commitizen"
+version_files = ["build.py:^VERSION", "README.md:^mkp "]
+# Below 1.0.0 a breaking change raises the minor version, not the major.
+major_version_zero = true

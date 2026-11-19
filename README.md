@@ -139,7 +139,8 @@ pass them on. Put the filter into the URL instead.
 ## Tests
 
 ```
-pip install pytest pytest-playwright pytest-testinfra requests
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements-test.txt
 playwright install chromium        # or: pytest --browser-channel chrome
 
 python3 -m pytest                  # unit tests, a few seconds
@@ -153,13 +154,30 @@ python3 -m pytest tests/integration   # real Checkmk 2.4 and 2.5 in Docker
 | `tests/integration/test_checkmk.py` | install, both endpoints with a session cookie, the dashboard and the page in a browser, on 2.4 and on 2.5 | Docker |
 | `tests/integration/test_update.py` | the same site updated from 2.4 to 2.5 | Docker |
 
-`.github/workflows/test.yml` runs all of it on every push; GitHub's runners
-provide Docker, so pushing the repository is the quickest way to get the
-integration tests run.
+The integration tests install Checkmk from its own packages: the newest patch
+release of 2.4 (Raw edition) and of 2.5 (Community edition), as listed in
+[stable_downloads.json](https://download.checkmk.com/stable_downloads.json),
+for Debian 12. Each package is checked against the SHA-256 given there and kept
+in `~/.cache/bi-pie` (`BI_PIE_CACHE`). Both go into one Docker image
+(`tests/integration/image/Dockerfile`), built on the first run (about 600 MB of
+downloads, several minutes) and again only for a new patch release. Every test
+module creates its sites in containers of that image; the update test runs
+`omd update` in the container of the 2.4 site, as on a server.
+`BI_PIE_PACKAGE_2_4` and `BI_PIE_PACKAGE_2_5` name a package file to use
+instead, e.g. an older patch release.
 
-The integration tests pull the official images (about 1 GB each) and take a few
-minutes per version. Other images can be set with `BI_PIE_IMAGE_2_4` and
-`BI_PIE_IMAGE_2_5`.
+## CI and releases
+
+`.forgejo/workflows/ci.yml` runs the unit tests, builds the MKP (kept as the
+run's artifact for 14 days) and then runs the integration tests, on every push
+to `main`, every pull request and every Monday, so that a new Checkmk patch
+release is tested before anyone updates to it.
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/). The
+release bot tags the releases due from them (`.cz.toml`), writing the version
+into `build.py` and the install commands above; the tag then publishes the MKP
+with its SHA-256 as a release (`.forgejo/workflows/release.yml`). Renovate keeps
+the test tools in `requirements-test.txt` up to date.
 
 ## Verification status
 
@@ -174,8 +192,11 @@ Checked against the Checkmk 2.4 and 2.5 sources:
 Checked by the unit tests: the page's behavior in a browser, against a stand-in
 that answers like those sources.
 
-**Not yet run: the integration tests.** Until they pass on your machine,
-nothing here has been exercised on a real Checkmk site.
+Checked by the integration tests, on sites installed from Checkmk's packages
+(2.4.0p41 Raw and 2.5.0p20 Community when this was written; CI tests the
+newest patch releases every week): the installation, both endpoints with a
+session cookie, the packaged dashboard, the page in a browser, and the update of
+a site with the package from 2.4 to 2.5.
 
 ## Build
 

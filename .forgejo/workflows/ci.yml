@@ -1,0 +1,89 @@
+---
+# The checks of every change: the unit tests (the package's sources, the MKP, the
+# page in a browser) and the MKP itself, then the integration tests on real
+# Checkmk 2.4 and 2.5 sites, built from Checkmk's newest patch releases
+# (tests/integration/packages.py). Weekly too, so that a new patch release of
+# Checkmk is tested with the package before anyone updates to it.
+name: CI
+# A failed job mails whoever started the run. Renovate's bot has no mailbox: when its
+# branch fails, Renovate opens a pull request, which mails the repository's watchers.
+# yaml-language-server-disable Property enable-email-notifications is not allowed.
+enable-email-notifications: true
+"on":
+  push:
+    # renovate/all-patch: patches merge without a pull request once CI passes.
+    branches: [main, renovate/all-patch]
+  pull_request:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    # A whole Ubuntu with sudo, for the browser's libraries (playwright --with-deps).
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: https://github.com/actions/checkout@v7
+
+      - name: Install the test tools
+        run: &install |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet --disable-pip-version-check -r requirements-test.txt
+          .venv/bin/playwright install --with-deps chromium > /dev/null
+
+      - name: Unit tests
+        id: tests
+        run: .venv/bin/python -m pytest --junitxml=/tmp/pytest.xml
+
+      # The results as one comment on the pull request (dawid/ci-actions), also when
+      # tests failed.
+      - name: Test report
+        if: always() && steps.tests.outcome != 'skipped'
+        uses: https://git.ciepiela.org/dawid/ci-actions/test-report@main
+        with:
+          junit: /tmp/pytest.xml
+
+      - name: Build the MKP
+        run: python3 build.py
+
+      # Forgejo's fork: GitHub's v4 refuses a server that is not GitHub's.
+      - name: Keep the MKP
+        uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: mkp
+          path: dist/*.mkp
+          retention-days: 14
+
+  integration:
+    needs: unit
+    # Docker (rootless) and loopback: the sites run in containers on published ports
+    # of 127.0.0.1, which the tests and the browser reach.
+    runs-on: ubuntu-latest
+    # The image takes about 6 minutes to build, each site 2 to 3 to set up.
+    timeout-minutes: 60
+    steps:
+      - name: Check out
+        uses: https://github.com/actions/checkout@v7
+
+      - name: Install the test tools
+        run: *install
+
+      # Apart from the tests, so that the log shows which patch releases are tested.
+      - name: Download Checkmk
+        run: .venv/bin/python tests/integration/packages.py 2.4 2.5
+
+      - name: Integration tests
+        id: tests
+        run: .venv/bin/python -m pytest tests/integration --junitxml=/tmp/pytest.xml
+
+      - name: Test report
+        if: always() && steps.tests.outcome != 'skipped'
+        uses: https://git.ciepiela.org/dawid/ci-actions/test-report@main
+        with:
+          junit: /tmp/pytest.xml
