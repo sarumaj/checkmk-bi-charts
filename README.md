@@ -2,12 +2,16 @@
 
 A dashboard element that shows the state distribution of Checkmk BI
 aggregations as a pie chart, with a list of the aggregations that are not OK.
+An optional layered view adds one ring per level of the BI tree, down to hosts
+and services.
 Checkmk has no pie chart for BI and no way to add custom widget types in 2.5,
 so this package embeds a small static page instead.
 
 ![Widget with sample data](docs/screenshot.png)
 
-*Rendered from the page with sample data, not taken from a live site.*
+![Layered view with sample data](docs/screenshot-tree.png)
+
+*Both rendered from the page with sample data, not taken from a live site.*
 
 ## Requirements
 
@@ -19,8 +23,8 @@ so this package embeds a small static page instead.
 As the site user:
 
 ```
-mkp add bi_pie-0.1.0.mkp
-mkp enable bi_pie 0.1.0
+mkp add bi_pie-0.2.0.mkp
+mkp enable bi_pie 0.2.0
 ```
 
 The package then provides:
@@ -46,9 +50,33 @@ local/bi_pie/index.html?group=WebApp&title=Web%20applications
 | `theme`   | `dark` (default) or `light` |
 | `list=0`  | Hide the list of non-OK aggregations |
 | `debug=1` | Show the raw REST API response |
+| `view=tree` | Layered view, see below |
+| `depth`   | Layered view: number of rings, default 3 |
+| `max`     | Layered view: most aggregations to load, default 40 |
 
 Clicking a slice or a legend entry narrows the list to that state. Each entry
 links to the aggregation's BI view.
+
+## Layered view
+
+```
+local/bi_pie/index.html?view=tree&group=WebApp
+local/bi_pie/index.html?view=tree&depth=4&name=Payment%20API
+```
+
+The innermost ring holds one equal segment per aggregation, in the same order
+as the flat pie. Each further ring is the next level of the BI tree: the rules
+an aggregation is built from, the rules those call (also across BI packs), and
+finally hosts and services. Children share their parent's angle by the number
+of hosts and services below them, and every segment has the color of its own
+state, so a problem can be followed from the outside in.
+
+Hovering a segment shows its path; clicking it shows the path, the state and,
+for rules, the BI pack and rule ID below the chart.
+
+Loading a tree takes one request per aggregation on every refresh. Above `max`
+aggregations the page shows the flat pie and says so, instead of drawing a
+partial set of trees.
 
 ## How it works
 
@@ -56,6 +84,11 @@ The page calls
 `GET /api/1.0/domain-types/bi_aggregation/actions/aggregation_state/invoke`
 with the viewer's GUI session, so every user sees only the aggregations they
 are permitted to see. No data is stored and no automation user is needed.
+
+That endpoint only reports the nodes that have a problem, so the layered view
+also calls `ajax_fetch_aggregation_data.py`, the GUI endpoint behind Checkmk's
+own BI visualization, once per aggregation. It is not a public API; it is the
+same in the 2.4 and 2.5 sources.
 
 One package covers both versions because it avoids version-specific code:
 
@@ -72,20 +105,22 @@ pass them on. Put the filter into the URL instead.
 Verified without a Checkmk site:
 
 - the archive is accepted by Checkmk's own MKP manifest parser (2.5 source)
-- the page renders correctly against a mocked REST response
+- both views render correctly against mocked responses
+- the response shapes the page parses match the 2.4 and 2.5 sources
 
 Still to verify on live 2.4 and 2.5 sites:
 
 - [ ] `mkp add` / `mkp enable` install both files
 - [ ] the REST endpoint accepts the GUI session cookie
-- [ ] the response has the shape the page expects (`debug=1` shows it)
+- [ ] both endpoints answer as the sources suggest (`debug=1` shows the REST one)
+- [ ] the layered view loads at an acceptable speed with real aggregation counts
 - [ ] the packaged dashboard appears, and on 2.5 its widget is converted
 - [ ] the list links open the right BI view
 - [ ] the package survives the update from 2.4 to 2.5
 
-`version.usable_until` is set to 2.6.0 because the packaged dashboard format
-and the local htdocs path are Checkmk internals that were only checked against
-the 2.4 and 2.5 sources.
+`version.usable_until` is set to 2.6.0 because the packaged dashboard format,
+the local htdocs path and the tree endpoint are Checkmk internals that were
+only checked against the 2.4 and 2.5 sources.
 
 ## Build and test
 

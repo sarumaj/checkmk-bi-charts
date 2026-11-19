@@ -24,7 +24,7 @@ ROOT = Path(__file__).parent
 SRC = ROOT / "src"
 
 NAME = "bi_pie"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # Part name -> files, relative to the part's directory in the site:
 #   web  ~/local/share/check_mk/web
@@ -39,7 +39,8 @@ MANIFEST: dict[str, object] = {
     "name": NAME,
     "description": (
         "Dashboard element that shows the state distribution of BI aggregations "
-        "as a pie chart, with a list of the aggregations that are not OK.\n\n"
+        "as a pie chart, with a list of the aggregations that are not OK. An "
+        "optional layered view adds one ring per level of the BI tree.\n\n"
         "Ships a static page that reads the BI aggregation states from the REST "
         "API with the viewer's session, and a dashboard that embeds it. Embed "
         "the page in your own dashboards with the custom URL element and the "

@@ -14,17 +14,23 @@
     theme=dark|light            default dark
     list=0                      hide the list of non-OK aggregations
     debug=1                     dump the raw REST response
+    view=tree                   layered view: one ring per level of the BI tree
+    depth=<rings>               tree view: number of rings, default 3
+    max=<count>                 tree view: most aggregations to load, default 40
 
-  Data comes from the REST API using the viewer's own GUI session, so every
-  user sees only the aggregations they are permitted to see.
+  The aggregation states come from the REST API. The tree view additionally
+  loads each aggregation's full tree from ajax_fetch_aggregation_data.py, the
+  GUI endpoint behind Checkmk's own BI visualization, because the REST API only
+  reports the nodes that have a problem. Both are called with the viewer's own
+  GUI session, so every user sees only what they are permitted to see.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>BI aggregation states</title>
 <style>
-  :root { --fg: #e8e8e8; --muted: #9aa3ad; --ring: #2c3844; }
-  body.light { --fg: #1e262e; --muted: #5b6770; --ring: #dfe3e8; }
+  :root { --fg: #e8e8e8; --muted: #9aa3ad; --ring: #2c3844; --gap: #1e262e; }
+  body.light { --fg: #1e262e; --muted: #5b6770; --ring: #dfe3e8; --gap: #ffffff; }
   html, body { margin: 0; height: 100%; background: transparent; }
   body { color: var(--fg); font: 13px/1.4 "Lato", "Helvetica Neue", Arial, sans-serif;
          display: flex; flex-direction: column; padding: 8px; box-sizing: border-box; }
@@ -36,6 +42,15 @@
   circle.ring { fill: none; stroke: var(--ring); stroke-width: 6; }
   text.total { font-size: 8px; font-weight: 700; fill: var(--fg); text-anchor: middle; }
   text.sub { font-size: 3px; fill: var(--muted); text-anchor: middle; }
+  /* Tree view: rings reach further in, so the centre label shrinks. */
+  body.tree svg { width: min(55vw, 75vh, 300px); }
+  body.tree circle.ring { display: none; }
+  body.tree text.total { font-size: 5px; }
+  body.tree text.sub { font-size: 2px; }
+  path.seg { stroke: var(--gap); stroke-width: .2; cursor: pointer; }
+  path.seg:hover, path.seg.active { opacity: .75; }
+  #detail { margin-top: 6px; min-height: 1.4em; }
+  #detail .flag { color: var(--muted); font-size: 11px; }
   #legend { list-style: none; margin: 0; padding: 0; }
   #legend li { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 1px 0; }
   #legend li.active { font-weight: 700; }
@@ -60,10 +75,11 @@
     <circle class="ring" cx="21" cy="21" r="15.9155"/>
     <g id="slices" transform="rotate(-90 21 21)"></g>
     <text class="total" x="21" y="22.5" id="total"></text>
-    <text class="sub" x="21" y="27">aggregations</text>
+    <text class="sub" x="21" y="27" id="sub">aggregations</text>
   </svg>
   <ul id="legend"></ul>
 </div>
+<div id="detail"></div>
 <ul id="list"></ul>
 <div id="msg"></div>
 <pre id="debug" hidden></pre>
@@ -92,10 +108,26 @@ for (const g of params.getAll("group")) API_URL.searchParams.append("filter_grou
 for (const n of params.getAll("name")) API_URL.searchParams.append("filter_names", n);
 
 const showList = params.get("list") !== "0";
+const treeView = params.get("view") === "tree";
+const depth = positiveInt("depth", 3);      // rings drawn in the tree view
+const maxTrees = positiveInt("max", 40);    // one request per aggregation and refresh
 let selected = null;   // state id the list is narrowed to, or null for all non-OK
 let lastAggrs = [];
+let lastTrees = null;  // Map of aggregation title -> tree, or null for the flat pie
+
+function positiveInt(name, fallback) {
+  if (!params.has(name)) return fallback;
+  const value = Number(params.get(name));
+  if (!Number.isInteger(value) || value < 1) {
+    // Show the mistake in the widget; the throw then stops the script.
+    message("Parameter " + name + " must be a positive integer.", true);
+    throw new Error("invalid parameter " + name);
+  }
+  return value;
+}
 
 if (params.get("theme") === "light") document.body.classList.add("light");
+if (treeView) document.body.classList.add("tree");
 if (params.get("title")) {
   $("title").textContent = params.get("title");
   $("title").hidden = false;
@@ -146,14 +178,136 @@ async function load() {
     acknowledged: Boolean(a.acknowledged),
     inDowntime: Boolean(a.in_downtime),
   }));
+  const notes = [];
+  let trees = null;
+  if (treeView && aggrs.length > maxTrees) {
+    // Refuse instead of loading a partial tree set that would look complete.
+    notes.push("Tree view is limited to " + maxTrees + " aggregations, " + aggrs.length +
+      " matched. Showing the flat pie; narrow with group= / name= or raise max=.");
+  } else if (treeView) {
+    try {
+      trees = await loadTrees(aggrs.map((a) => a.title));
+    } catch (err) {
+      message("Loading the aggregation trees failed: " + String(err.message || err), true);
+      return;
+    }
+  }
+  document.body.classList.toggle("tree", trees !== null);
   lastAggrs = aggrs;
+  lastTrees = trees;
   render(aggrs);
 
-  const notes = [];
   if (!aggrs.length) notes.push("No aggregations matched.");
   if ((body.missing_sites || []).length) notes.push("Missing sites: " + body.missing_sites.join(", "));
   if ((body.missing_aggr || []).length) notes.push("Missing aggregations: " + body.missing_aggr.join(", "));
   message(notes.join("\n"), false);
+}
+
+// Loads the full tree of every aggregation, a few requests at a time.
+async function loadTrees(titles) {
+  const trees = new Map();
+  const queue = titles.slice();
+  async function worker() {
+    for (let title = queue.shift(); title !== undefined; title = queue.shift()) {
+      trees.set(title, await loadTree(title));
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(6, queue.length) }, worker));
+  return trees;
+}
+
+async function loadTree(title) {
+  const url = new URL("ajax_fetch_aggregation_data.py", GUI_BASE);
+  url.searchParams.set("aggregations", JSON.stringify([title]));
+  const resp = await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } });
+  if (!resp.ok) throw new Error("HTTP " + resp.status + " for \"" + title + "\"");
+  const answer = await resp.json();
+  // Ajax pages answer {result_code, result}; a non-zero code carries the error text.
+  if (answer.result_code !== 0) throw new Error(String(answer.result));
+  const root = answer.result && answer.result.node_config && answer.result.node_config.hierarchy;
+  if (!root) throw new Error("No tree returned for \"" + title + "\"");
+  return toNode(root);
+}
+
+// Reduces a node of Checkmk's BI visualization data to what the chart needs.
+function toNode(raw) {
+  const core = (raw.type_specific && raw.type_specific.core) || {};
+  const children = (raw.children || []).map(toNode);
+  return {
+    name: String(raw.name),
+    state: STATES.some((s) => s.id === core.state) ? core.state : 3,
+    acknowledged: Boolean(core.acknowledged),
+    inDowntime: Boolean(core.in_downtime),
+    // Rules are inner nodes; leaves are hosts or services.
+    rule: raw.rule_id ? raw.rule_id.pack + " / " + raw.rule_id.rule : null,
+    children,
+    // Angular weight: every host or service counts once.
+    leaves: children.length ? children.reduce((sum, c) => sum + c.leaves, 0) : 1,
+  };
+}
+
+// Ring segment between two radii and two angles (radians, clockwise from the
+// group's zero direction, which the rotated <g> points to twelve o'clock).
+function segmentPath(r0, r1, a0, a1) {
+  if (a1 - a0 >= 2 * Math.PI - 1e-9) {
+    // An arc cannot span a full circle, so draw two circles and cut the inner out.
+    const circle = (r) => "M" + (21 - r) + ",21a" + r + "," + r + " 0 1,0 " + 2 * r + ",0a" +
+      r + "," + r + " 0 1,0 " + -2 * r + ",0Z";
+    return circle(r1) + circle(r0);
+  }
+  const at = (r, a) => (21 + r * Math.cos(a)).toFixed(3) + "," + (21 + r * Math.sin(a)).toFixed(3);
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  return "M" + at(r1, a0) + "A" + r1 + "," + r1 + " 0 " + large + ",1 " + at(r1, a1) +
+    "L" + at(r0, a1) + "A" + r0 + "," + r0 + " 0 " + large + ",0 " + at(r0, a0) + "Z";
+}
+
+// Layered view: ring 1 holds one equal segment per aggregation, each further
+// ring the next tree level, with children sharing their parent's angle by the
+// number of hosts and services below them.
+function renderTree(aggrs, trees) {
+  const inner = 7.5, outer = 20.5, width = (outer - inner) / depth;
+  const slices = $("slices");
+  slices.replaceChildren();
+
+  function draw(node, a0, a1, level, path) {
+    if (level >= depth) return;
+    const here = path.concat(node.name);
+    const state = STATES.find((s) => s.id === node.state);
+    const seg = document.createElementNS(SVG_NS, "path");
+    seg.setAttribute("class", "seg");
+    seg.setAttribute("fill", state.color);
+    seg.setAttribute("fill-rule", "evenodd");
+    seg.setAttribute("d", segmentPath(inner + level * width, inner + (level + 1) * width, a0, a1));
+    const tip = document.createElementNS(SVG_NS, "title");
+    tip.textContent = here.join(" \u203a ") + ": " + state.label;
+    seg.append(tip);
+    seg.addEventListener("click", () => showDetail(seg, node, here));
+    slices.append(seg);
+    let start = a0;
+    for (const child of node.children) {
+      const end = start + (a1 - a0) * child.leaves / node.leaves;
+      draw(child, start, end, level + 1, here);
+      start = end;
+    }
+  }
+
+  // Same order as the flat pie, so the inner ring reads like it.
+  const ordered = aggrs.slice().sort((a, b) =>
+    STATES.findIndex((s) => s.id === a.state) - STATES.findIndex((s) => s.id === b.state) ||
+    a.title.localeCompare(b.title));
+  const step = 2 * Math.PI / ordered.length;
+  ordered.forEach((a, i) => draw(trees.get(a.title), i * step, (i + 1) * step, 0, []));
+}
+
+function showDetail(seg, node, path) {
+  for (const other of document.querySelectorAll("path.seg.active")) other.classList.remove("active");
+  seg.classList.add("active");
+  const state = STATES.find((s) => s.id === node.state);
+  const flags = [node.acknowledged && "ack", node.inDowntime && "downtime",
+                 node.rule && "rule " + node.rule].filter(Boolean).join(", ");
+  $("detail").replaceChildren(
+    el("span", { textContent: path.join(" \u203a ") + ": " + state.label + " " }),
+    el("span", { className: "flag", textContent: flags }));
 }
 
 function render(aggrs) {
@@ -165,10 +319,11 @@ function render(aggrs) {
   // which makes dash lengths equal to percentages and handles a 100% slice.
   const slices = $("slices");
   slices.replaceChildren();
+  $("detail").replaceChildren();
   let offset = 0;
   for (const s of STATES) {
     const n = counts.get(s.id);
-    if (!n) continue;
+    if (!n || lastTrees) continue;
     const pct = (n / total) * 100;
     const c = document.createElementNS(SVG_NS, "circle");
     c.setAttribute("class", "slice" + (selected === s.id ? " active" : ""));
@@ -185,7 +340,12 @@ function render(aggrs) {
     slices.append(c);
     offset += pct;
   }
+  if (lastTrees && total) renderTree(aggrs, lastTrees);
   $("total").textContent = total;
+  $("sub").textContent = total === 1 ? "aggregation" : "aggregations";
+  // The tree view's rings reach further in, so the label sits tighter.
+  $("total").setAttribute("y", lastTrees ? 21.4 : 22.5);
+  $("sub").setAttribute("y", lastTrees ? 24.2 : 27);
 
   $("legend").replaceChildren(...STATES.filter((s) => counts.get(s.id) || s.id >= 0 && s.id <= 2).map((s) => {
     const swatch = el("i", {});
