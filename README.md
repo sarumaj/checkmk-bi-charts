@@ -17,7 +17,9 @@ so this package embeds a small static page instead.
 
 ## Requirements
 
-- Checkmk 2.4.0 or 2.5.0, any edition
+- Checkmk 2.4.0 or 2.5.0, any edition: every version Checkmk maintains (2.3 left
+  maintenance on 2026-10-29). CI checks this every week against Checkmk's list of
+  releases and fails once a new version is out and not yet tested.
 - Viewers need access to BI. The shipped dashboard is a packaged one; with
   Checkmk's default permissions every role may see it.
 

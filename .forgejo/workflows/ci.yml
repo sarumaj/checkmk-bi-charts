@@ -44,6 +44,12 @@ jobs:
           .venv/bin/pip install --quiet --disable-pip-version-check -r requirements-test.txt
           .venv/bin/playwright install --with-deps chromium > /dev/null
 
+      # Checkmk's current versions (stable_downloads.json) against the matrix below
+      # and the manifest's range: the weekly run fails when Checkmk releases a new
+      # version, until the package is tested with it.
+      - name: Check the tested Checkmk versions
+        run: .venv/bin/python tests/integration/packages.py --check 2.4 2.5
+
       - name: Unit tests
         id: tests
         run: .venv/bin/python -m pytest --junitxml=/tmp/pytest.xml
@@ -78,6 +84,8 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      # The versions Checkmk maintains (the unit job checks the list), and the update
+      # between them.
       matrix:
         include:
           - name: Checkmk 2.4
