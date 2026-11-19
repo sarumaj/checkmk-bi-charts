@@ -107,7 +107,7 @@ jobs:
             tests: tests/integration/test_update.py
     env:
       # The versions the image holds (tests/integration/checkmk_site.py).
-      BI_PIE_VERSIONS: ${{ matrix.versions }}
+      BI_CHARTS_VERSIONS: ${{ matrix.versions }}
     steps:
       - name: Check out
         uses: https://github.com/actions/checkout@v7
@@ -117,7 +117,7 @@ jobs:
 
       # Apart from the tests, so that the log shows which patch releases are tested.
       - name: Download Checkmk
-        run: .venv/bin/python tests/integration/packages.py $BI_PIE_VERSIONS
+        run: .venv/bin/python tests/integration/packages.py $BI_CHARTS_VERSIONS
 
       - name: Integration tests
         id: tests

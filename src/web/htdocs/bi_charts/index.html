@@ -2,9 +2,9 @@
 <!--
   BI aggregation state pie for Checkmk dashboards.
 
-  Shipped by the bi_pie MKP and served at /<site>/check_mk/local/bi_pie/index.html.
+  Shipped by the bi_charts MKP and served at /<site>/check_mk/local/bi_charts/index.html.
   Embed it with the custom URL dashboard element, using the site-relative URL
-  local/bi_pie/index.html (plus the query parameters below).
+  local/bi_charts/index.html (plus the query parameters below).
 
   Query parameters (all optional):
     group=<aggregation group>   repeatable, filters by BI aggregation group
@@ -139,7 +139,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const params = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
 
-// The page lives at /<site>/check_mk/local/bi_pie/, the GUI at /<site>/check_mk/.
+// The page lives at /<site>/check_mk/local/bi_charts/, the GUI at /<site>/check_mk/.
 const GUI_BASE = new URL("../../", location.href);
 const API_URL = new URL(
   "api/1.0/domain-types/bi_aggregation/actions/aggregation_state/invoke", GUI_BASE);

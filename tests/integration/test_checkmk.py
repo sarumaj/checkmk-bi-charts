@@ -33,8 +33,8 @@ def site(request: pytest.FixtureRequest) -> Iterator[Site]:
 @pytest.mark.parametrize(
     "path",
     [
-        pytest.param(f"/omd/sites/{SITE}/local/share/check_mk/web/htdocs/bi_pie/index.html", id="page"),
-        pytest.param(f"/omd/sites/{SITE}/local/lib/python3/cmk/gui/plugins/dashboard/bi_pie", id="dashboard"),
+        pytest.param(f"/omd/sites/{SITE}/local/share/check_mk/web/htdocs/bi_charts/index.html", id="page"),
+        pytest.param(f"/omd/sites/{SITE}/local/lib/python3/cmk/gui/plugins/dashboard/bi_charts", id="dashboard"),
     ],
 )
 def test_package_installs_its_files(site: Site, path: str) -> None:
@@ -56,7 +56,7 @@ def test_package_is_enabled(site: Site) -> None:
 
 
 def test_page_is_served(site: Site) -> None:
-    response = site.gui().get(site.url + "local/bi_pie/index.html")
+    response = site.gui().get(site.url + "local/bi_charts/index.html")
     assert response.status_code == 200
     assert "<title>BI aggregation states</title>" in response.text
 
@@ -113,14 +113,14 @@ def test_packaged_dashboard_embeds_the_page(site: Site) -> None:
     gui = site.gui()
     if site.version == "2.4":
         # 2.4 renders the widget's iframe into the dashboard page.
-        response = gui.get(site.url + "dashboard.py", params={"name": "bi_pie"})
+        response = gui.get(site.url + "dashboard.py", params={"name": "bi_charts"})
     else:
         # 2.5 builds the dashboard in the browser from this endpoint.
         response = gui.get(
-            site.url + "api/unstable/objects/dashboard_relative_grid/bi_pie", headers={"Accept": "application/json"}
+            site.url + "api/unstable/objects/dashboard_relative_grid/bi_charts", headers={"Accept": "application/json"}
         )
     assert response.status_code == 200, response.text[:500]
-    assert "local/bi_pie/index.html" in response.text
+    assert "local/bi_charts/index.html" in response.text
 
 
 def _log_in(page: Page, site: Site) -> None:
@@ -132,7 +132,7 @@ def _log_in(page: Page, site: Site) -> None:
 
 def test_page_draws_the_flat_pie_in_a_browser(page: Page, site: Site) -> None:
     _log_in(page, site)
-    page.goto(site.url + "local/bi_pie/index.html")
+    page.goto(site.url + "local/bi_charts/index.html")
     expect(page.locator("#msg.err")).to_have_count(0)
     expect(page.locator("#total")).to_have_text("1")
     expect(page.locator("circle.slice")).to_have_count(1)
@@ -140,7 +140,7 @@ def test_page_draws_the_flat_pie_in_a_browser(page: Page, site: Site) -> None:
 
 def test_page_draws_the_tree_in_a_browser(page: Page, site: Site) -> None:
     _log_in(page, site)
-    page.goto(site.url + "local/bi_pie/index.html?view=tree&depth=5")
+    page.goto(site.url + "local/bi_charts/index.html?view=tree&depth=5")
     expect(page.locator("#msg.err")).to_have_count(0)
     expect(page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]')).to_have_count(1)
     # At least the aggregation and one rule below it, and the hosts and services
@@ -167,7 +167,7 @@ def test_page_draws_the_tree_in_a_browser(page: Page, site: Site) -> None:
 
 def test_dashboard_shows_the_widget_in_a_browser(page: Page, site: Site) -> None:
     _log_in(page, site)
-    page.goto(site.url + "dashboard.py?name=bi_pie")
-    widget = page.frame_locator('iframe[src*="local/bi_pie/index.html"]')
+    page.goto(site.url + "dashboard.py?name=bi_charts")
+    widget = page.frame_locator('iframe[src*="local/bi_charts/index.html"]')
     expect(widget.locator("#total")).to_have_text("1")
     expect(widget.locator("#msg.err")).to_have_count(0)

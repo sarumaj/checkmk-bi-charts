@@ -1,4 +1,4 @@
-# bi_pie: BI aggregation state pie for Checkmk
+# bi_charts: BI aggregation state pie for Checkmk
 
 A dashboard element that shows the state distribution of Checkmk BI
 aggregations as a pie chart, with a list of the aggregations that are not OK.
@@ -29,14 +29,14 @@ taken from a live site.*
 As the site user:
 
 ```
-mkp add bi_pie-0.4.0.mkp
-mkp enable bi_pie 0.4.0
+mkp add bi_charts-0.4.0.mkp
+mkp enable bi_charts 0.4.0
 ```
 
 The package then provides:
 
-- the dashboard **BI aggregation states** (`dashboard.py?name=bi_pie`)
-- the page `local/bi_pie/index.html`, for use in your own dashboards
+- the dashboard **BI aggregation states** (`dashboard.py?name=bi_charts`)
+- the page `local/bi_charts/index.html`, for use in your own dashboards
 
 ## Use it in your own dashboards
 
@@ -48,7 +48,7 @@ elements of a dashboard:
 (the current documentation; Checkmk publishes no separate 2.5 address).
 
 ```
-local/bi_pie/index.html?group=WebApp&title=Web%20applications
+local/bi_charts/index.html?group=WebApp&title=Web%20applications
 ```
 
 | Parameter | Meaning |
@@ -91,8 +91,8 @@ and segments, so that problems stand out.
 ## Layered view
 
 ```
-local/bi_pie/index.html?view=tree&group=WebApp
-local/bi_pie/index.html?view=tree&depth=4&name=Payment%20API
+local/bi_charts/index.html?view=tree&group=WebApp
+local/bi_charts/index.html?view=tree&depth=4&name=Payment%20API
 ```
 
 The innermost ring holds one equal segment per aggregation, in the same order
@@ -133,8 +133,8 @@ One package covers both versions because it avoids version-specific code:
 
 | Part  | Content | Why it works on 2.4 and 2.5 |
 |-------|---------|-----------------------------|
-| `web` | `htdocs/bi_pie/index.html` | Both serve `~/local/share/check_mk/web/htdocs` at `/<site>/check_mk/local/` |
-| `gui` | `dashboard/bi_pie` | Packaged dashboard in the 2.4 format, which 2.5 converts when loading |
+| `web` | `htdocs/bi_charts/index.html` | Both serve `~/local/share/check_mk/web/htdocs` at `/<site>/check_mk/local/` |
+| `gui` | `dashboard/bi_charts` | Packaged dashboard in the 2.4 format, which 2.5 converts when loading |
 
 Dashboard filters do not reach the page, because the embed element does not
 pass them on. Put the filter into the URL instead.
@@ -178,12 +178,12 @@ The integration tests install Checkmk from its own packages: the newest patch
 release of 2.4 (Raw edition) and of 2.5 (Community edition), as listed in
 [stable_downloads.json](https://download.checkmk.com/stable_downloads.json),
 for Debian 12. Each package is checked against the SHA-256 given there and kept
-in `~/.cache/bi-pie` (`BI_PIE_CACHE`). Both go into one Docker image
+in `~/.cache/bi-charts` (`BI_CHARTS_CACHE`). Both go into one Docker image
 (`tests/integration/image/Dockerfile`), built on the first run (about 600 MB of
 downloads, several minutes) and again only for a new patch release. Every test
 module creates its sites in containers of that image; the update test runs
 `omd update` in the container of the 2.4 site, as on a server.
-`BI_PIE_PACKAGE_2_4` and `BI_PIE_PACKAGE_2_5` name a package file to use
+`BI_CHARTS_PACKAGE_2_4` and `BI_CHARTS_PACKAGE_2_5` name a package file to use
 instead, e.g. an older patch release.
 
 ## CI and releases
@@ -201,7 +201,7 @@ anyone updates to it:
 | `release` | for a tag only, once all of the above passed: the MKP as a release |
 
 Each integration job builds an image with only its versions
-(`BI_PIE_VERSIONS`, default `2.4 2.5`); a new Checkmk version is one more entry
+(`BI_CHARTS_VERSIONS`, default `2.4 2.5`); a new Checkmk version is one more entry
 in the matrix.
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/). The
@@ -234,7 +234,7 @@ a site with the package from 2.4 to 2.5.
 ## Build
 
 ```
-./build.py           # writes dist/bi_pie-<version>.mkp, no Checkmk site needed
+./build.py           # writes dist/bi_charts-<version>.mkp, no Checkmk site needed
 ```
 
 The build is reproducible: identical sources give a byte-identical archive.

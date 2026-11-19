@@ -17,7 +17,7 @@ from checkmk_site import AGGREGATION, SITE, STATE_ENDPOINT, Site
 
 
 pytestmark = pytest.mark.skipif(
-    not {"2.4", "2.5"} <= set(checkmk_site.VERSIONS), reason="needs Checkmk 2.4 and 2.5 (BI_PIE_VERSIONS)"
+    not {"2.4", "2.5"} <= set(checkmk_site.VERSIONS), reason="needs Checkmk 2.4 and 2.5 (BI_CHARTS_VERSIONS)"
 )
 
 
@@ -42,8 +42,8 @@ def test_site_runs_the_new_version(updated_site: Site) -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        pytest.param(f"/omd/sites/{SITE}/local/share/check_mk/web/htdocs/bi_pie/index.html", id="page"),
-        pytest.param(f"/omd/sites/{SITE}/local/lib/python3/cmk/gui/plugins/dashboard/bi_pie", id="dashboard"),
+        pytest.param(f"/omd/sites/{SITE}/local/share/check_mk/web/htdocs/bi_charts/index.html", id="page"),
+        pytest.param(f"/omd/sites/{SITE}/local/lib/python3/cmk/gui/plugins/dashboard/bi_charts", id="dashboard"),
     ],
 )
 def test_update_keeps_the_files(updated_site: Site, path: str) -> None:
@@ -60,11 +60,11 @@ def test_update_keeps_the_package_enabled(updated_site: Site) -> None:
 
 def test_update_keeps_the_dashboard(updated_site: Site) -> None:
     response = updated_site.gui().get(
-        updated_site.url + "api/unstable/objects/dashboard_relative_grid/bi_pie",
+        updated_site.url + "api/unstable/objects/dashboard_relative_grid/bi_charts",
         headers={"Accept": "application/json"},
     )
     assert response.status_code == 200, response.text[:500]
-    assert "local/bi_pie/index.html" in response.text
+    assert "local/bi_charts/index.html" in response.text
 
 
 def test_page_still_draws_after_the_update(page: Page, updated_site: Site) -> None:
@@ -74,6 +74,6 @@ def test_page_still_draws_after_the_update(page: Page, updated_site: Site) -> No
     page.context.add_cookies(
         [{"name": cookie.name, "value": cookie.value, "url": updated_site.url} for cookie in gui.cookies]
     )
-    page.goto(updated_site.url + "local/bi_pie/index.html?view=tree&refresh=3")
+    page.goto(updated_site.url + "local/bi_charts/index.html?view=tree&refresh=3")
     expect(page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]')).to_have_count(1, timeout=120_000)
     expect(page.locator("#msg.err")).to_have_count(0)

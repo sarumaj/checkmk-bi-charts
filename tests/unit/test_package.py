@@ -18,29 +18,29 @@ import build  # noqa: E402
 @pytest.mark.parametrize(
     "key, expected",
     [
-        pytest.param("name", "bi_pie", id="name matches the file key"),
+        pytest.param("name", "bi_charts", id="name matches the file key"),
         pytest.param("packaged", True, id="marked as packaged"),
         pytest.param("public", True, id="visible to other users"),
     ],
 )
 def test_dashboard_definition(key: str, expected: object) -> None:
-    dashboards = ast.literal_eval((ROOT / "src/gui/dashboard/bi_pie").read_text())
-    assert dashboards["bi_pie"][key] == expected
+    dashboards = ast.literal_eval((ROOT / "src/gui/dashboard/bi_charts").read_text())
+    assert dashboards["bi_charts"][key] == expected
 
 
 def test_dashboard_embeds_the_page_site_relative() -> None:
-    dashboards = ast.literal_eval((ROOT / "src/gui/dashboard/bi_pie").read_text())
-    dashlets = dashboards["bi_pie"]["dashlets"]
+    dashboards = ast.literal_eval((ROOT / "src/gui/dashboard/bi_charts").read_text())
+    dashlets = dashboards["bi_charts"]["dashlets"]
     # A site-relative URL keeps the package independent of the site name.
-    assert [(d["type"], d["url"]) for d in dashlets] == [("url", "local/bi_pie/index.html")]
-    assert (ROOT / "src/web/htdocs/bi_pie/index.html").is_file()
+    assert [(d["type"], d["url"]) for d in dashlets] == [("url", "local/bi_charts/index.html")]
+    assert (ROOT / "src/web/htdocs/bi_charts/index.html").is_file()
 
 
 @pytest.mark.parametrize(
     "part, expected",
     [
-        pytest.param("web", ["htdocs/bi_pie/index.html"], id="web part"),
-        pytest.param("gui", ["dashboard/bi_pie"], id="gui part"),
+        pytest.param("web", ["htdocs/bi_charts/index.html"], id="web part"),
+        pytest.param("gui", ["dashboard/bi_charts"], id="gui part"),
     ],
 )
 def test_mkp_parts_hold_the_manifest_files(part: str, expected: list[str]) -> None:

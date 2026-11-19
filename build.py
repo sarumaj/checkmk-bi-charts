@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build the bi_pie MKP from the files under src/.
+"""Build the bi_charts MKP from the files under src/.
 
-    ./build.py            # writes dist/bi_pie-<version>.mkp
+    ./build.py            # writes dist/bi_charts-<version>.mkp
 
 An MKP is a gzipped tar holding the manifest twice (``info`` as a Python
 literal, ``info.json`` for external tools) and one uncompressed tar per package
@@ -23,15 +23,15 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 SRC = ROOT / "src"
 
-NAME = "bi_pie"
+NAME = "bi_charts"
 VERSION = "0.4.0"
 
 # Part name -> files, relative to the part's directory in the site:
 #   web  ~/local/share/check_mk/web
 #   gui  ~/local/lib/check_mk/gui/plugins (2.4), ~/local/lib/python3/cmk/gui/plugins (2.5)
 FILES: dict[str, list[str]] = {
-    "web": ["htdocs/bi_pie/index.html"],
-    "gui": ["dashboard/bi_pie"],
+    "web": ["htdocs/bi_charts/index.html"],
+    "gui": ["dashboard/bi_charts"],
 }
 
 MANIFEST: dict[str, object] = {
@@ -44,7 +44,7 @@ MANIFEST: dict[str, object] = {
         "Ships a static page that reads the BI aggregation states from the REST "
         "API with the viewer's session, and a dashboard that embeds it. Embed "
         "the page in your own dashboards with the custom URL element and the "
-        "URL local/bi_pie/index.html."
+        "URL local/bi_charts/index.html."
     ),
     "version": VERSION,
     "version.packaged": "2.4.0",
@@ -53,7 +53,7 @@ MANIFEST: dict[str, object] = {
     # were only checked against the 2.4 and 2.5 sources.
     "version.usable_until": "2.6.0",
     "author": "Dawid Ciepiela",
-    "download_url": "https://github.com/sarumaj/checkmk-bi-pie",
+    "download_url": "https://git.ciepiela.org/dawid/checkmk-bi-charts",
     "files": FILES,
 }
 

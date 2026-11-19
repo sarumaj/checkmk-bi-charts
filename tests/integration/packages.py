@@ -7,11 +7,11 @@
 Takes the newest patch release of each version from Checkmk's list of stable
 releases, which also gives each package's SHA-256, in the free edition (Raw up
 to 2.4, Community from 2.5) for Debian 12, the base of the test image. A
-package is kept in the cache directory (BI_PIE_CACHE, default
-~/.cache/bi-pie) and checked again before every use, so a download that broke
+package is kept in the cache directory (BI_CHARTS_CACHE, default
+~/.cache/bi-charts) and checked again before every use, so a download that broke
 off is fetched again instead of installed.
 
-BI_PIE_PACKAGE_2_4 and BI_PIE_PACKAGE_2_5 name a package file to use instead,
+BI_CHARTS_PACKAGE_2_4 and BI_CHARTS_PACKAGE_2_5 name a package file to use instead,
 e.g. an older patch release.
 """
 
@@ -28,7 +28,7 @@ DOWNLOADS = "https://download.checkmk.com/checkmk"
 # The free edition's key in the list, whatever the package is called.
 EDITION = "community"
 DISTRIBUTION = "bookworm"
-CACHE = Path(os.environ.get("BI_PIE_CACHE", Path.home() / ".cache" / "bi-pie"))
+CACHE = Path(os.environ.get("BI_CHARTS_CACHE", Path.home() / ".cache" / "bi-charts"))
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ def _download(url: str, target: Path, sha256: str) -> None:
 
 def package(version: str, releases: dict[str, dict] | None = None) -> Package:
     """The package of the newest patch release of ``version`` (``2.4``), downloaded."""
-    own = os.environ.get(f"BI_PIE_PACKAGE_{version.replace('.', '_')}")
+    own = os.environ.get(f"BI_CHARTS_PACKAGE_{version.replace('.', '_')}")
     if own:
         path = Path(own).resolve()
         # check-mk-raw-2.4.0p41_0.bookworm_amd64.deb -> 2.4.0p41
@@ -83,7 +83,7 @@ def package(version: str, releases: dict[str, dict] | None = None) -> Package:
 
 
 def packages(versions: list[str]) -> list[Package]:
-    releases = None if all(os.environ.get(f"BI_PIE_PACKAGE_{v.replace('.', '_')}") for v in versions) else _releases()
+    releases = None if all(os.environ.get(f"BI_CHARTS_PACKAGE_{v.replace('.', '_')}") for v in versions) else _releases()
     return [package(version, releases) for version in versions]
 
 

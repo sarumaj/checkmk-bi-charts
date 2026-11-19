@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-PAGE = Path(__file__).parent.parent.parent / "src/web/htdocs/bi_pie/index.html"
+PAGE = Path(__file__).parent.parent.parent / "src/web/htdocs/bi_charts/index.html"
 
 # Aggregation title -> (state, acknowledged, in downtime, BI group).
 AGGREGATIONS: dict[str, tuple[int, bool, bool, str]] = {
@@ -67,7 +67,7 @@ class Stub(ThreadingHTTPServer):
 
     @property
     def page(self) -> str:
-        return self.base + "local/bi_pie/index.html"
+        return self.base + "local/bi_charts/index.html"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -87,13 +87,13 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         query = parse_qs(url.query)
         path = url.path.removeprefix("/stub/check_mk/")
-        if path == "local/bi_pie/index.html":
+        if path == "local/bi_charts/index.html":
             self._send(200, "text/html", PAGE.read_bytes())
         elif path == "dashboard.py":
             # Embedding page, as Checkmk renders it: themed <body>, widget in an iframe.
             html = (
                 f'<!DOCTYPE html><body data-theme="{self.server.parent_theme}">'
-                f'<iframe id="widget" src="local/bi_pie/index.html?{query.get("widget", [""])[0]}"></iframe>'
+                f'<iframe id="widget" src="local/bi_charts/index.html?{query.get("widget", [""])[0]}"></iframe>'
             )
             self._send(200, "text/html", html.encode())
         elif path == "api/1.0/domain-types/bi_aggregation/actions/aggregation_state/invoke":
