@@ -162,19 +162,44 @@ def test_rings_legend_counts_hosts_and_services(page: Page, stub: Stub) -> None:
     )
 
 
-def test_wide_ring_segments_carry_their_name(page: Page, stub: Stub) -> None:
+def test_wide_ring_segments_carry_their_name_along_the_ring(page: Page, stub: Stub) -> None:
     page.set_viewport_size({"width": 900, "height": 700})
-    page.goto(stub.page + "?view=rings&depth=2")
+    page.goto(stub.page + "?view=rings&depth=2&animation=0&name=Payment")
+    items(page, 4, "service")
+    # One aggregation: its ring is whole, its two host rules half a ring each, wide
+    # enough to bend their names along them.
+    expect(page.locator("#arcs textPath")).to_have_text(["Payment", "Payment-1", "Payment-2"])
+    # Six aggregations: a sixth of the ring each, narrow, so along the radius.
+    page.goto(stub.page + "?view=rings&depth=2&animation=0")
     items(page, SERVICES, "service")
-    expect(page.locator("#chart text", has_text="Payment").first).to_be_attached()
     expect(page.locator("#chart text", has_text="ERP").first).to_be_attached()
+
+
+@pytest.mark.parametrize("view", ["pie", "rings"])
+def test_bent_names_read_from_left_to_right(page: Page, stub: Stub, view: str) -> None:
+    page.set_viewport_size({"width": 900, "height": 700})
+    page.goto(f"{stub.page}?view={view}&animation=0&name=Payment&name=ERP&name=Shop")
+    expect(page.locator("#arcs textPath").first).to_be_attached()
+    # Each arc's end lies right of its start (or level with it, at the sides), so that no
+    # name stands on its head.
+    ends = page.locator("#arcs path").evaluate_all(
+        "(arcs) => arcs.map((a) => [a.getPointAtLength(0).x, a.getPointAtLength(a.getTotalLength()).x])"
+    )
+    assert ends and all(end >= start - 1 for start, end in ends), ends
+
+
+def test_pie_slices_carry_their_state_and_count(page: Page, stub: Stub) -> None:
+    page.set_viewport_size({"width": 900, "height": 700})
+    page.goto(stub.page + "?animation=0")
+    expect(page.locator("#arcs textPath", has_text="OK 3")).to_have_count(1)
 
 
 def test_labels_0_draws_no_names(page: Page, stub: Stub) -> None:
     page.set_viewport_size({"width": 900, "height": 700})
-    page.goto(stub.page + "?view=rings&labels=0")
+    page.goto(stub.page + "?view=rings&labels=0&animation=0")
     items(page, SERVICES, "service")
     expect(page.locator("#chart text")).to_have_count(0)
+    expect(page.locator("#arcs text")).to_have_count(0)
 
 
 @pytest.mark.parametrize(
