@@ -285,17 +285,6 @@ function paint(id) {
   return style;
 }
 
-// A fill without transparency: the pale OK mixed with the background, for shapes drawn
-// over one another (the treemap's), whose transparent fills would add up.
-function opaque(color) {
-  if (color.length !== 9) return color;
-  const alpha = parseInt(color.slice(7), 16) / 255;
-  const under = css("--gap");
-  const mix = (i) => Math.round(parseInt(color.slice(i, i + 2), 16) * alpha +
-    parseInt(under.slice(i, i + 2), 16) * (1 - alpha)).toString(16).padStart(2, "0");
-  return "#" + mix(1) + mix(3) + mix(5);
-}
-
 // A node's name without its parent's in front, for labels: "Frontend" below "Web Shop"
 // instead of "Web Shop Frontend". The tooltips keep the whole name.
 function shortName(name, parent) {
@@ -925,25 +914,21 @@ function ringsOption(aggrs, trees) {
   };
 }
 
-// The BI trees as nested rectangles, sized by hosts and services, the worst first (top
-// left), as the tiles; clicking one zooms into it, the path above leads back. The fills
-// are opaque: a rectangle lies on its parent's, and pale fills would add up.
+// The BI trees as nested rectangles, sized by hosts and services, the worst aggregations
+// first (top left), as the tiles; below them the BI order. Clicking one zooms into it,
+// the path above leads back. A rectangle lies on its parent's: the pale OK adds up to a
+// brighter one each level down, which sets the levels apart.
 function treemapOption(aggrs, trees) {
-  const worstFirst = (nodes) => nodes.slice().sort((a, b) => severity(b.state) - severity(a.state) ||
-    b.leaves - a.leaves);
   function build(node, path) {
     const here = path.concat(node.name);
     const kind = path.length === 0 ? "aggregation" : node.children.length ? "rule" : node.service ? "service" : "host";
-    const color = opaque(fill(node.state));
     return {
       name: shortName(node.name, path[path.length - 1]),
       value: node.leaves,
       id: ref({ path: here, node, kind }),
-      itemStyle: { ...paint(node.state), color, borderColor: color },
-      label: { color: labelColor(node.state) },
-      upperLabel: { color: labelColor(node.state) },
+      itemStyle: { ...paint(node.state), borderColor: fill(node.state) },
       tip: () => nodeTip(node, here),
-      children: node.children.length ? worstFirst(node.children).map((c) => build(c, here)) : undefined,
+      children: node.children.length ? node.children.map((c) => build(c, here)) : undefined,
     };
   }
   const gap = css("--gap");
@@ -961,8 +946,8 @@ function treemapOption(aggrs, trees) {
       drillDownIcon: "",
       left: 0, right: 0, top: 0, bottom: 32,
       visibleMin: 30,
-      label: { show: showLabels, fontSize: 11, overflow: "truncate" },
-      upperLabel: { show: showLabels, height: 18, fontWeight: 700, overflow: "truncate" },
+      label: { show: showLabels, color: "#000", fontSize: 11, overflow: "truncate" },
+      upperLabel: { show: showLabels, height: 18, color: "#000", fontWeight: 700, overflow: "truncate" },
       breadcrumb: { show: true, bottom: 0, itemStyle: { color: css("--ring"), textStyle: { color: css("--fg") } } },
       levels: [
         { itemStyle: { gapWidth: 4, borderWidth: 0, borderColor: gap } },
