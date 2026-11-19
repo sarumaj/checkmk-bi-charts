@@ -179,6 +179,29 @@ def test_page_draws_the_groups_in_a_browser(page: Page, site: Site) -> None:
     assert [i["path"].split(" › ")[0] for i in _items(page, "group-state")] == ["default"]
 
 
+def test_page_draws_the_tiles_in_a_browser(page: Page, site: Site) -> None:
+    _log_in(page, site)
+    page.goto(site.url + "local/bi_charts/index.html?view=tiles")
+    expect(page.locator("#msg.err")).to_have_count(0)
+    assert [i["path"] for i in _items(page, "aggregation")] == [AGGREGATION]
+
+
+def test_page_draws_the_impact_in_a_browser(page: Page, site: Site) -> None:
+    _log_in(page, site)
+    page.goto(site.url + "local/bi_charts/index.html?view=impact")
+    expect(page.locator("#msg.err")).to_have_count(0)
+    # The host's services that are not OK (its agent does not answer), each in the
+    # one aggregation; or none, if every one of them is OK by now.
+    page.wait_for_function(
+        "() => window.biCharts && (biCharts.items().length > 0 ||"
+        " document.getElementById('chart').textContent.includes('All hosts and services are OK'))",
+        timeout=60_000,
+    )
+    for item in page.evaluate("biCharts.items()"):
+        assert item["kind"] == "impact"
+        assert item["path"].startswith(MONITORED_HOST)
+
+
 def test_dashboard_shows_the_widget_in_a_browser(page: Page, site: Site) -> None:
     _log_in(page, site)
     page.goto(site.url + "dashboard.py?name=bi_charts")

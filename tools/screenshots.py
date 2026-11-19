@@ -46,6 +46,12 @@ SAMPLE: dict[str, tuple[int, bool, bool, str]] = {
 }
 SERVICES = ["CPU load", "Memory", "Filesystem /", "Interface eth0", "NTP", "HTTPS", "Uptime"]
 LAYERS = ["Frontend", "Application", "Database", "Storage", "Network"]
+# Hosts and services that several aggregations share: (host, service, state, aggregations).
+SHARED: list[tuple[str, str, int, set[str]]] = [
+    ("core-sw1", "Interface uplink", 2, {"Core Network East", "Payment API", "Web Shop", "Customer Portal", "VPN"}),
+    ("san-01", "Volume latency", 1, {"Object Storage", "Reporting Database", "Legacy ERP", "Backup"}),
+    ("dc-01", "NTP", 1, {"Directory", "Mail"}),
+]
 
 
 def sample_tree(title: str) -> dict[str, object]:
@@ -65,6 +71,11 @@ def sample_tree(title: str) -> dict[str, object]:
             ]
             hosts.append(checkmk_stub._rule(host, "host", bad, services))
         layers.append(checkmk_stub._rule(f"{title} {layer}", "layer", state if index == 0 else 0, hosts))
+    shared = [(host, service, bad) for host, service, bad, titles in SHARED if title in titles]
+    if shared:
+        # The rule as bad as its worst; the aggregation above may still be OK (redundancy).
+        leaves = [checkmk_stub._leaf(*leaf) for leaf in shared]
+        layers.append(checkmk_stub._rule(f"{title} Shared", "shared", max(bad for _, _, bad in shared), leaves))
     root = checkmk_stub._rule(title, "application", state, layers)
     root["type_specific"] = {"core": {"state": state, "in_downtime": int(in_downtime), "acknowledged": acknowledged}}
     return root
@@ -103,6 +114,11 @@ SHOTS: dict[str, tuple[list[tuple[str, str]], int, str | None]] = {
     "screenshot-groups.png": (
         [("view=groups", "view=groups&list=0&" + GROUPS), ("view=bars", "view=bars&list=0&" + GROUPS)],
         420,
+        None,
+    ),
+    "screenshot-tiles.png": (
+        [("view=tiles", "view=tiles&list=0"), ("view=impact", "view=impact&list=0")],
+        480,
         None,
     ),
     "screenshot-hover.png": (

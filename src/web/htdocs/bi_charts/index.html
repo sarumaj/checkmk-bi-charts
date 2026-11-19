@@ -15,6 +15,10 @@
                                 tree:    the BI trees as a tree of nodes
                                 groups:  one donut per group
                                 bars:    one stacked bar per group
+                                tiles:   one hexagon per aggregation, the
+                                         worst first
+                                impact:  the hosts and services that are not
+                                         OK, by the aggregations they are in
     group=<aggregation group>   repeatable, filters by BI aggregation group; the
                                 groups of the views groups and bars
     name=<aggregation title>    repeatable, filters by aggregation title
@@ -23,6 +27,7 @@
     depth=<levels>              rings, treemap, tree: rule levels shown, default 3
     max=<count>                 views of the trees: most aggregations to load,
                                 default 40
+    top=<count>                 impact: most hosts and services shown, default 15
     title=<text>                heading above the chart
     refresh=<seconds>           reload interval, default 60, 0 disables
     theme=dark|light            default: the Checkmk theme of the embedding
@@ -63,11 +68,11 @@
   #chart { width: min(45vw, 60vh, 240px); aspect-ratio: 1; }
   body.view-rings #chart { width: min(60vw, 80vh, 440px); }
   body.view-treemap #stage, body.view-tree #stage, body.view-groups #stage,
-  body.view-bars #stage { flex: 1 1 100%; }
+  body.view-bars #stage, body.view-tiles #stage, body.view-impact #stage { flex: 1 1 100%; }
   body.view-treemap #chart, body.view-tree #chart { width: 100%; aspect-ratio: auto;
                                                     height: max(240px, 65vh); }
-  body.view-groups #chart, body.view-bars #chart { width: 100%; aspect-ratio: auto;
-                                                   height: max(200px, 45vh); }
+  body.view-groups #chart, body.view-bars #chart, body.view-tiles #chart,
+  body.view-impact #chart { width: 100%; aspect-ratio: auto; height: max(200px, 45vh); }
   /* The total in the middle of the round charts. */
   #center { position: absolute; inset: 0; display: flex; flex-direction: column;
             align-items: center; justify-content: center; pointer-events: none; }
@@ -138,9 +143,9 @@ const STATES = [
   { id: 3,  key: "unknown", label: "UNKNOWN", color: "#ff8800" },
   { id: -1, key: "pending", label: "PENDING", color: "#8a949e" },
 ];
-const VIEWS = ["pie", "rings", "treemap", "tree", "groups", "bars"];
+const VIEWS = ["pie", "rings", "treemap", "tree", "groups", "bars", "tiles", "impact"];
 // The views that need every aggregation's tree.
-const TREE_VIEWS = ["rings", "treemap", "tree"];
+const TREE_VIEWS = ["rings", "treemap", "tree", "impact"];
 
 const params = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -154,6 +159,7 @@ const view = choice("view", VIEWS, "pie");
 const by = choice("by", ["group", "pack"], groupsGiven.length ? "group" : "pack");
 const depth = positiveInt("depth", 3);      // rule levels drawn in the views of the trees
 const maxTrees = positiveInt("max", 40);    // one request per aggregation and refresh
+const topRows = positiveInt("top", 15);         // rows of the view impact
 const showList = params.get("list") !== "0";
 const showLegend = params.get("legend") !== "0";
 const showLabels = params.get("labels") !== "0";
@@ -162,7 +168,8 @@ const animate = params.get("animation") !== "0";
 applyColors();
 
 let selected = null;   // state id the list is narrowed to, or null for all non-OK
-let selectedGroup = null;  // group name the list is narrowed to (views groups, bars)
+let selectedScope = null;  // key of the scope the list is narrowed to (a group, a host)
+let scopes = new Map();    // scope key -> the titles of its aggregations, from the last drawing
 let faded = null;      // state id a hovered legend row leaves in full color
 let last = null;       // what the last load found: {aggrs, trees, groups}
 let refs = new Map();  // chart item id -> {path, node or state or group}
@@ -497,11 +504,19 @@ function ref(entry) {
   return id;
 }
 
+// Registers a set of aggregations a click narrows the list to; the key stays the
+// same across refreshes, the titles are those of the last drawing.
+function scope(key, titles) {
+  scopes.set(key, titles);
+  return key;
+}
+
 // Draws the chart and, unless only the chart changes (a legend row's fading,
 // which must not replace the row under the pointer), the legend and the list.
 function render(chartOnly) {
   if (!last) return;
   refs = new Map();
+  scopes = new Map();
   const { aggrs, trees, groups } = last;
   const shown = TREE_VIEWS.includes(view) && !trees ? "pie" : (view === "groups" || view === "bars") && !groups
     ? "pie" : view;
@@ -516,6 +531,8 @@ function render(chartOnly) {
     tree: () => treeOption(aggrs, trees),
     groups: () => groupsOption(aggrs, groups),
     bars: () => barsOption(aggrs, groups),
+    tiles: () => tilesOption(aggrs),
+    impact: () => impactOption(aggrs, trees),
   }[shown]());
   $("arcs").replaceChildren();
   chart.setOption(option, { notMerge: true });
@@ -536,6 +553,12 @@ function heightOf(shown) {
   const { aggrs, trees, groups } = last;
   if (shown === "groups") return groupGrid(groups.length).rows * 170 + "px";
   if (shown === "bars") return Math.max(120, groups.length * 34 + 40) + "px";
+  if (shown === "tiles") {
+    const { columns, size } = tileGrid(aggrs.length);
+    const rows = Math.max(1, Math.ceil(aggrs.length / columns));
+    return Math.ceil(rows * size * 1.5 + size * 0.5 + 8) + "px";
+  }
+  if (shown === "impact") return Math.max(120, Math.min(topRows, impactOf(aggrs, trees).length) * 26 + 50) + "px";
   if (shown === "tree") {
     // A row per node at the unfolded depth, and per host or service above it.
     const rows = (node, level) => (level === depth || !node.children.length ? 1
@@ -830,7 +853,8 @@ function groupsOption(aggrs, groups) {
       data: present.map((s) => ({
         name: s.label,
         value: counts.get(s.id),
-        id: ref({ path: [group.name, s.label], state: s.id, group: group.name, kind: "group-state" }),
+        id: ref({ path: [group.name, s.label], state: s.id, scope: scope(group.name, group.titles),
+                  kind: "group-state" }),
         stateId: s.id,
         group: group.name,
         itemStyle: { color: fill(s.id) },
@@ -877,11 +901,158 @@ function barsOption(aggrs, groups) {
       label: { show: showLabels, color: "#000", fontSize: 10, formatter: (p) => (p.value ? p.value : "") },
       data: groups.map((g, i) => ({
         value: per[i].get(s.id),
-        id: ref({ path: [g.name, s.label], state: s.id, group: g.name, kind: "group-state" }),
+        id: ref({ path: [g.name, s.label], state: s.id, scope: scope(g.name, g.titles), kind: "group-state" }),
         stateId: s.id,
         group: g.name,
         itemStyle: { color: fill(s.id), borderRadius: 2 },
         tip: () => groupTip(g, groupAggrs(aggrs, g)),
+      })),
+    })),
+  };
+}
+
+// The aggregations worst first (as the list), then by title.
+function bySeverity(aggrs) {
+  return aggrs.slice().sort((a, b) => severity(b.state) - severity(a.state) || a.title.localeCompare(b.title));
+}
+
+// Details of one aggregation from its state alone.
+function aggrTip(aggr) {
+  const state = stateOf(aggr.state);
+  return '<div class="head">' + swatch(state.color) + esc(aggr.title) + "</div><div>" +
+    esc([state.label].concat(flagsOf(aggr)).join(", ")) + "</div>";
+}
+
+// The tiles' size (the hexagons' outer radius) and how many fit in a row: as large
+// as 46 pixels, smaller where the widget is too narrow for one.
+function tileGrid(count) {
+  const width = $("chart").clientWidth - 8;
+  const size = Math.max(12, Math.min(46, width / (Math.sqrt(3) * 1.5)));
+  const fit = Math.floor(width / (Math.sqrt(3) * size) - (count > 1 ? 0.5 : 0));
+  return { size, columns: Math.max(1, Math.min(count, fit)) };
+}
+
+// One hexagon per aggregation, the worst first, its name inside: the states of many
+// aggregations at a glance, without loading their trees. Rows are offset by half a
+// tile, as in a honeycomb.
+function tilesOption(aggrs) {
+  const list = bySeverity(aggrs);
+  const { columns, size } = tileGrid(list.length);
+  const width = Math.sqrt(3) * size;
+  const fontSize = Math.min(12, size * 0.27);
+  const data = list.map((a, i) => {
+    const row = Math.floor(i / columns), column = i % columns;
+    return {
+      name: a.title,
+      value: [4 + (column + 0.5 + (row % 2) * 0.5) * width, 4 + size + row * size * 1.5],
+      id: ref({ path: [a.title], node: a, kind: "aggregation" }),
+      itemStyle: { color: fill(a.state) },
+      tip: () => aggrTip(a),
+    };
+  });
+  const corners = [0, 1, 2, 3, 4, 5].map((k) => (Math.PI / 3) * k - Math.PI / 2);
+  return {
+    series: [{
+      type: "custom",
+      coordinateSystem: "none",
+      data,
+      renderItem: (p, api) => {
+        const x = api.value(0), y = api.value(1), r = size - 1.5;
+        const aggr = list[p.dataIndex];
+        const flags = [aggr.acknowledged && "ack", aggr.inDowntime && "downtime"].filter(Boolean).join(", ");
+        const named = showLabels && fontSize >= 8;
+        return {
+          type: "polygon",
+          shape: { points: corners.map((a) => [x + r * Math.cos(a), y + r * Math.sin(a)]) },
+          style: { fill: api.visual("color") },
+          emphasis: { style: { stroke: css("--fg"), lineWidth: 2 } },
+          textContent: named ? {
+            style: { text: aggr.title + (flags ? "\n" + flags : ""), fill: labelColor(aggr.state),
+                     opacity: faded !== null && aggr.state !== faded ? 0.3 : 1, fontSize,
+                     fontWeight: 700, align: "center", lineHeight: fontSize * 1.2,
+                     // Wrapped to the tile's width, at most three lines.
+                     width: width * 0.8, overflow: "break", height: fontSize * 1.2 * 3, lineOverflow: "truncate" },
+          } : undefined,
+          textConfig: { position: "inside" },
+        };
+      },
+    }],
+  };
+}
+
+// The hosts and services that are not OK, each with the aggregations it is part of,
+// sorted by how many of those are not OK, then by how many there are: what to fix
+// first. The same host or service in several aggregations counts once per aggregation.
+function impactOf(aggrs, trees) {
+  const found = new Map();
+  for (const aggr of aggrs) {
+    const walk = (node) => {
+      if (node.children.length) return node.children.forEach(walk);
+      if (node.state === 0) return;
+      const key = (node.host || node.name) + "\u0000" + (node.service || "");
+      if (!found.has(key)) {
+        const name = node.service ? (node.host ? node.host + " › " + node.service : node.name) : node.host || node.name;
+        found.set(key, { key, name, node, aggrs: new Map() });
+      }
+      found.get(key).aggrs.set(aggr.title, aggr);
+    };
+    walk(trees.get(aggr.title));
+  }
+  return [...found.values()].map((leaf) => {
+    const list = bySeverity([...leaf.aggrs.values()]);
+    return { ...leaf, list, bad: list.filter((a) => a.state !== 0).length };
+  }).sort((a, b) => b.bad - a.bad || b.list.length - a.list.length ||
+    severity(b.node.state) - severity(a.node.state) || a.name.localeCompare(b.name));
+}
+
+// Details of one host or service of the view impact: its state and its aggregations.
+function impactTip(leaf) {
+  const state = stateOf(leaf.node.state);
+  const shown = leaf.list.slice(0, 8);
+  let html = '<div class="head">' + swatch(state.color) + esc(leaf.name) + "</div><div>" +
+    esc([state.label].concat(flagsOf(leaf.node)).join(", ")) + "</div><div>In " + leaf.list.length +
+    (leaf.list.length === 1 ? " aggregation: " : " aggregations: ") + esc(stateSummary(countStates(leaf.list))) +
+    "</div><ul>" + shown.map((a) => "<li>" + swatch(stateOf(a.state).color) + esc(a.title) + "</li>").join("") +
+    "</ul>";
+  if (leaf.list.length > shown.length) html += '<div class="more">and ' + (leaf.list.length - shown.length) + " more</div>";
+  return html;
+}
+
+// One bar per host or service that is not OK, as long as the aggregations it is
+// part of, a segment per state of those; a dot in the host's or service's own state
+// before its name.
+function impactOption(aggrs, trees) {
+  const leaves = impactOf(aggrs, trees).slice(0, topRows);
+  if (!leaves.length) {
+    return { title: { text: "All hosts and services are OK", left: "center", top: "middle",
+                      textStyle: { color: css("--muted"), fontSize: 13, fontWeight: 400 } } };
+  }
+  const per = leaves.map((leaf) => countStates(leaf.list));
+  const rich = Object.fromEntries(STATES.map((s) => ["s" + (s.id < 0 ? "p" : s.id), { color: s.color, fontSize: 13 }]));
+  // Braces would start rich text of their own.
+  const names = leaves.map((leaf) => leaf.name.replace(/[{}|]/g, "_"));
+  return {
+    grid: { left: 8, right: 16, top: 8, bottom: 24, containLabel: true },
+    xAxis: { type: "value", minInterval: 1, name: "aggregations", nameLocation: "middle", nameGap: 22,
+             nameTextStyle: { color: css("--muted") }, axisLabel: { color: css("--muted") },
+             splitLine: { lineStyle: { color: css("--ring") } } },
+    yAxis: { type: "category", inverse: true, data: names,
+             axisLabel: { color: css("--fg"), width: 220, overflow: "truncate", rich,
+                          formatter: (name, i) => "{s" + (leaves[i].node.state < 0 ? "p" : leaves[i].node.state) +
+                            "|●} " + name },
+             axisLine: { lineStyle: { color: css("--ring") } }, axisTick: { show: false } },
+    series: STATES.filter((s) => per.some((c) => c.get(s.id))).map((s) => ({
+      type: "bar",
+      name: s.label,
+      stack: "states",
+      barMaxWidth: 18,
+      label: { show: showLabels, color: labelColor(s.id), fontSize: 10, formatter: (p) => (p.value ? p.value : "") },
+      data: leaves.map((leaf, i) => ({
+        value: per[i].get(s.id),
+        id: ref({ path: [leaf.name, s.label], state: s.id, kind: "impact",
+                  scope: scope("leaf:" + leaf.key, new Set(leaf.list.map((a) => a.title))) }),
+        itemStyle: { color: fill(s.id), borderRadius: 2 },
+        tip: () => impactTip(leaf),
       })),
     })),
   };
@@ -925,10 +1096,10 @@ function renderLegend(aggrs, trees) {
 
 function renderList(aggrs) {
   if (!showList) return;
-  const group = selectedGroup && last.groups && last.groups.find((g) => g.name === selectedGroup);
+  const titles = selectedScope !== null ? scopes.get(selectedScope) || new Set() : null;
   const rows = aggrs
     .filter((a) => (selected === null ? a.state !== 0 : a.state === selected))
-    .filter((a) => !group || group.titles.has(a.title))
+    .filter((a) => !titles || titles.has(a.title))
     .sort((a, b) => severity(b.state) - severity(a.state) || a.title.localeCompare(b.title));
   $("list").replaceChildren(...rows.map((a) => {
     const s = stateOf(a.state);
@@ -949,10 +1120,10 @@ function severity(state) {
   return { 2: 4, 3: 3, 1: 2, "-1": 1, 0: 0 }[state];
 }
 
-function select(stateId, group) {
-  const same = selected === stateId && selectedGroup === group;
+function select(stateId, scopeKey) {
+  const same = selected === stateId && selectedScope === scopeKey;
   selected = same ? null : stateId;
-  selectedGroup = same ? null : group;
+  selectedScope = same ? null : scopeKey;
   render();
 }
 
@@ -977,7 +1148,7 @@ chart.on("click", (p) => {
   const entry = p.data && p.data.id && refs.get(p.data.id);
   if (!entry) return;
   if (entry.node) showDetail(entry);
-  else select(entry.state, entry.group || null);
+  else select(entry.state, entry.scope || null);
 });
 
 // What the chart shows, for the tests and for debugging in the browser's

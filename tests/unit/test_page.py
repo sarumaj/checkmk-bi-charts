@@ -34,6 +34,24 @@ def items(page: Page, count: int | None = None, kind: str | None = None) -> list
     return [item for item in found if not kind or item["kind"] == kind]
 
 
+def click(page: Page, path: str) -> None:
+    """Click an item with the mouse, in the middle of where ECharts drew it."""
+    item = next(item for item in items(page) if item["path"] == path)
+    x, y = page.evaluate(
+        """([s, d]) => {
+            const layout = biCharts.chart.getModel().getSeriesByIndex(s).getData().getItemLayout(d);
+            const box = document.getElementById("chart").getBoundingClientRect();
+            // Bars have a rectangle; the tiles their middle as the value.
+            const [x, y] = layout && layout.width !== undefined
+                ? [layout.x + layout.width / 2, layout.y + layout.height / 2]
+                : biCharts.chart.getOption().series[s].data[d].value;
+            return [box.left + x, box.top + y];
+        }""",
+        [item["seriesIndex"], item["dataIndex"]],
+    )
+    page.mouse.click(x, y)
+
+
 def show_tip(page: Page, path: str) -> None:
     """Show an item's tooltip, as hovering it does."""
     item = next(item for item in items(page) if item["path"] == path)
@@ -240,7 +258,7 @@ def test_treemap_and_tree_hold_every_node(page: Page, stub: Stub, view: str) -> 
     assert (kinds.count("aggregation"), kinds.count("rule"), kinds.count("service")) == (6, 12, SERVICES)
 
 
-@pytest.mark.parametrize("view", ["rings", "treemap", "tree"])
+@pytest.mark.parametrize("view", ["rings", "treemap", "tree", "impact"])
 def test_views_of_the_trees_refuse_more_aggregations_than_max(page: Page, stub: Stub, view: str) -> None:
     page.goto(f"{stub.page}?view={view}&max=5")
     expect(page.locator("#msg")).to_contain_text(f"The {view} view is limited to 5 aggregations, 6 matched")
@@ -295,6 +313,94 @@ def test_hover_on_a_group_shows_its_states(page: Page, stub: Stub) -> None:
     expect(page.locator(".tip")).to_contain_text("3 aggregations: 1 OK, 1 WARN, 1 UNKNOWN")
 
 
+# --- tiles and impact -----------------------------------------------------------------
+
+
+def test_tiles_hold_every_aggregation_worst_first(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=tiles")
+    found = items(page, 6, "aggregation")
+    assert [(i["path"], i["state"]) for i in found] == [
+        ("Payment", 2), ("ERP", 3), ("Storage", 1), ("Mail", 0), ("Shop", 0), ("Wiki", 0)
+    ]
+    expect(page.locator("#chart text").first).to_have_text("Payment")
+    # The states alone: no tree is loaded.
+    assert stub.tree_requests == 0
+
+
+def test_tiles_name_acknowledgement_and_downtime(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=tiles")
+    items(page, 6, "aggregation")
+    # A line per <text> or <tspan>, as the SVG renderer writes them.
+    lines = page.locator("#chart text, #chart tspan").evaluate_all(
+        "(nodes) => nodes.filter((n) => !n.querySelector('tspan')).map((n) => n.textContent)"
+    )
+    assert "ack" in lines and "downtime" in lines
+
+
+def test_hover_and_click_on_a_tile(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=tiles")
+    items(page, 6, "aggregation")
+    show_tip(page, "Payment")
+    expect(page.locator(".tip")).to_contain_text("CRIT, acknowledged")
+    click(page, "Storage")
+    expect(page.locator("#detail")).to_have_text("Storage: WARN downtime", use_inner_text=True)
+
+
+def test_tiles_labels_0_draws_no_names(page: Page, stub: Stub) -> None:
+    page.goto(stub.page + "?view=tiles&labels=0")
+    items(page, 6, "aggregation")
+    expect(page.locator("#chart text")).to_have_count(0)
+
+
+SHARED = {"Shop": [("san-1", "Latency", 1)], "Payment": [("san-1", "Latency", 1)], "Storage": [("san-1", "Latency", 1)]}
+
+
+def impact(page: Page) -> dict[str, Any]:
+    """The rows of the view impact and, per state, the aggregations of each row."""
+    return page.evaluate(
+        "(() => { const o = biCharts.chart.getOption();"
+        " return { rows: o.yAxis[0].data, series: o.series.map((s) => [s.name, s.data.map((d) => d.value)]) }; })()"
+    )
+
+
+def test_impact_ranks_what_drags_most_aggregations_down(page: Page, stub: Stub) -> None:
+    stub.extra_leaves = SHARED
+    page.goto(stub.page + "?view=impact")
+    items(page, 4, "impact")
+    shown = impact(page)
+    # san-1 is in three aggregations, two of them not OK; then each aggregation's own
+    # service, CRIT before UNKNOWN before WARN.
+    assert shown["rows"] == ["san-1 › Latency", "Payment-1 › CPU", "ERP-1 › CPU", "Storage-1 › CPU"]
+    assert shown["series"] == [
+        ["OK", [1, 0, 0, 0]], ["WARN", [1, 0, 0, 1]], ["CRIT", [1, 1, 0, 0]], ["UNKNOWN", [0, 0, 1, 0]]
+    ]
+
+
+def test_impact_top_limits_the_rows(page: Page, stub: Stub) -> None:
+    stub.extra_leaves = SHARED
+    page.goto(stub.page + "?view=impact&top=2")
+    items(page, 2, "impact")
+    assert impact(page)["rows"] == ["san-1 › Latency", "Payment-1 › CPU"]
+
+
+def test_hover_and_click_on_an_impact_bar(page: Page, stub: Stub) -> None:
+    stub.extra_leaves = SHARED
+    page.goto(stub.page + "?view=impact")
+    items(page, 4, "impact")
+    show_tip(page, "san-1 › Latency › WARN")
+    for line in ["san-1 › Latency", "WARN", "In 3 aggregations: 1 OK, 1 WARN, 1 CRIT", "Payment", "Shop"]:
+        expect(page.locator(".tip")).to_contain_text(line)
+    # A click narrows the list to the aggregations of that state the host or service is in.
+    click(page, "san-1 › Latency › OK")
+    expect(page.locator("#list li")).to_have_text(["OK Shop"], use_inner_text=True)
+
+
+def test_impact_when_everything_is_ok(page: Page, stub: Stub) -> None:
+    stub.aggregations = {"Shop": (0, False, False, "web")}
+    page.goto(stub.page + "?view=impact")
+    expect(page.locator("#chart")).to_contain_text("All hosts and services are OK")
+
+
 # --- parameters, errors, theme ---------------------------------------------------------
 
 
@@ -305,8 +411,11 @@ def test_hover_on_a_group_shows_its_states(page: Page, stub: Stub) -> None:
         pytest.param("?max=many", "Parameter max must be a positive integer.", id="max not a number"),
         pytest.param("?theme=blue", "Parameter theme must be dark or light.", id="unknown theme"),
         pytest.param(
-            "?view=sankey", "Parameter view must be one of pie, rings, treemap, tree, groups, bars.", id="unknown view"
+            "?view=sankey",
+            "Parameter view must be one of pie, rings, treemap, tree, groups, bars, tiles, impact.",
+            id="unknown view",
         ),
+        pytest.param("?top=0", "Parameter top must be a positive integer.", id="top zero"),
         pytest.param("?by=host", "Parameter by must be one of group, pack.", id="unknown grouping"),
         pytest.param(
             "?colors=crit:red",
