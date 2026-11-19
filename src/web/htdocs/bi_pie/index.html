@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<!--
+  BI aggregation state pie for Checkmk dashboards.
+
+  Shipped by the bi_pie MKP and served at /<site>/check_mk/local/bi_pie/index.html.
+  Embed it with the custom URL dashboard element, using the site-relative URL
+  local/bi_pie/index.html (plus the query parameters below).
+
+  Query parameters (all optional):
+    group=<aggregation group>   repeatable, filters by BI aggregation group
+    name=<aggregation title>    repeatable, filters by aggregation title
+    title=<text>                heading above the chart
+    refresh=<seconds>           reload interval, default 60, 0 disables
+    theme=dark|light            default dark
+    list=0                      hide the list of non-OK aggregations
+    debug=1                     dump the raw REST response
+
+  Data comes from the REST API using the viewer's own GUI session, so every
+  user sees only the aggregations they are permitted to see.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BI aggregation states</title>
+<style>
+  :root { --fg: #e8e8e8; --muted: #9aa3ad; --ring: #2c3844; }
+  body.light { --fg: #1e262e; --muted: #5b6770; --ring: #dfe3e8; }
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { color: var(--fg); font: 13px/1.4 "Lato", "Helvetica Neue", Arial, sans-serif;
+         display: flex; flex-direction: column; padding: 8px; box-sizing: border-box; }
+  h1 { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
+  #wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; flex: 0 0 auto; }
+  svg { width: min(45vw, 60vh, 220px); height: auto; flex: 0 0 auto; }
+  circle.slice { fill: none; stroke-width: 6; cursor: pointer; transition: stroke-width .15s; }
+  circle.slice:hover, circle.slice.active { stroke-width: 8; }
+  circle.ring { fill: none; stroke: var(--ring); stroke-width: 6; }
+  text.total { font-size: 8px; font-weight: 700; fill: var(--fg); text-anchor: middle; }
+  text.sub { font-size: 3px; fill: var(--muted); text-anchor: middle; }
+  #legend { list-style: none; margin: 0; padding: 0; }
+  #legend li { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 1px 0; }
+  #legend li.active { font-weight: 700; }
+  #legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  #legend .n { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; }
+  #list { list-style: none; margin: 8px 0 0; padding: 0; overflow: auto; flex: 1 1 auto; }
+  #list li { display: flex; gap: 6px; align-items: baseline; padding: 1px 0; }
+  #list .badge { font-size: 10px; font-weight: 700; color: #000; border-radius: 2px;
+                 padding: 0 4px; flex: 0 0 auto; }
+  #list a { color: inherit; text-decoration: none; }
+  #list a:hover { text-decoration: underline; }
+  #list .flag { color: var(--muted); font-size: 11px; }
+  #msg { color: var(--muted); margin-top: 6px; white-space: pre-wrap; }
+  #msg.err { color: #ff6464; }
+  pre { font-size: 11px; overflow: auto; }
+</style>
+</head>
+<body>
+<h1 id="title" hidden></h1>
+<div id="wrap">
+  <svg viewBox="0 0 42 42" role="img" aria-label="BI aggregation states">
+    <circle class="ring" cx="21" cy="21" r="15.9155"/>
+    <g id="slices" transform="rotate(-90 21 21)"></g>
+    <text class="total" x="21" y="22.5" id="total"></text>
+    <text class="sub" x="21" y="27">aggregations</text>
+  </svg>
+  <ul id="legend"></ul>
+</div>
+<ul id="list"></ul>
+<div id="msg"></div>
+<pre id="debug" hidden></pre>
+
+<script>
+"use strict";
+
+// Checkmk monitoring states; -1 is PENDING. Order is the draw order.
+const STATES = [
+  { id: 0,  label: "OK",      color: "#13d389" },
+  { id: 1,  label: "WARN",    color: "#ffd703" },
+  { id: 2,  label: "CRIT",    color: "#ff3232" },
+  { id: 3,  label: "UNKNOWN", color: "#ff8800" },
+  { id: -1, label: "PENDING", color: "#8a949e" },
+];
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+const params = new URLSearchParams(location.search);
+const $ = (id) => document.getElementById(id);
+
+// The page lives at /<site>/check_mk/local/bi_pie/, the GUI at /<site>/check_mk/.
+const GUI_BASE = new URL("../../", location.href);
+const API_URL = new URL(
+  "api/1.0/domain-types/bi_aggregation/actions/aggregation_state/invoke", GUI_BASE);
+for (const g of params.getAll("group")) API_URL.searchParams.append("filter_groups", g);
+for (const n of params.getAll("name")) API_URL.searchParams.append("filter_names", n);
+
+const showList = params.get("list") !== "0";
+let selected = null;   // state id the list is narrowed to, or null for all non-OK
+let lastAggrs = [];
+
+if (params.get("theme") === "light") document.body.classList.add("light");
+if (params.get("title")) {
+  $("title").textContent = params.get("title");
+  $("title").hidden = false;
+}
+
+function message(text, isError) {
+  $("msg").textContent = text || "";
+  $("msg").classList.toggle("err", Boolean(isError));
+}
+
+function el(tag, props, ...children) {
+  const node = document.createElement(tag);
+  Object.assign(node, props);
+  node.append(...children);
+  return node;
+}
+
+async function load() {
+  let data;
+  try {
+    const resp = await fetch(API_URL, {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    });
+    if (resp.status === 401 || resp.status === 403) {
+      throw new Error("Not authorised (HTTP " + resp.status + "). Log in to Checkmk first.");
+    }
+    if (!resp.ok) {
+      throw new Error("REST API returned HTTP " + resp.status + ":\n" + (await resp.text()).slice(0, 400));
+    }
+    data = await resp.json();
+  } catch (err) {
+    message(String(err.message || err), true);
+    return;
+  }
+
+  if (params.get("debug") === "1") {
+    $("debug").hidden = false;
+    $("debug").textContent = JSON.stringify(data, null, 2);
+  }
+
+  // Expected: {aggregations: {<title>: {state, acknowledged, in_downtime, ...}},
+  //            missing_sites: [...], missing_aggr: [...]}
+  const body = data.aggregations ? data : (data.extensions || {});
+  const aggrs = Object.entries(body.aggregations || {}).map(([title, a]) => ({
+    title,
+    state: STATES.some((s) => s.id === a.state) ? a.state : 3,
+    acknowledged: Boolean(a.acknowledged),
+    inDowntime: Boolean(a.in_downtime),
+  }));
+  lastAggrs = aggrs;
+  render(aggrs);
+
+  const notes = [];
+  if (!aggrs.length) notes.push("No aggregations matched.");
+  if ((body.missing_sites || []).length) notes.push("Missing sites: " + body.missing_sites.join(", "));
+  if ((body.missing_aggr || []).length) notes.push("Missing aggregations: " + body.missing_aggr.join(", "));
+  message(notes.join("\n"), false);
+}
+
+function render(aggrs) {
+  const total = aggrs.length;
+  const counts = new Map(STATES.map((s) => [s.id, 0]));
+  for (const a of aggrs) counts.set(a.state, counts.get(a.state) + 1);
+
+  // Donut built from stroked circles: r is chosen so the circumference is 100,
+  // which makes dash lengths equal to percentages and handles a 100% slice.
+  const slices = $("slices");
+  slices.replaceChildren();
+  let offset = 0;
+  for (const s of STATES) {
+    const n = counts.get(s.id);
+    if (!n) continue;
+    const pct = (n / total) * 100;
+    const c = document.createElementNS(SVG_NS, "circle");
+    c.setAttribute("class", "slice" + (selected === s.id ? " active" : ""));
+    c.setAttribute("cx", 21);
+    c.setAttribute("cy", 21);
+    c.setAttribute("r", 15.9155);
+    c.setAttribute("stroke", s.color);
+    c.setAttribute("stroke-dasharray", pct + " " + (100 - pct));
+    c.setAttribute("stroke-dashoffset", -offset);
+    const tip = document.createElementNS(SVG_NS, "title");
+    tip.textContent = s.label + ": " + n + " (" + pct.toFixed(1) + " %)";
+    c.append(tip);
+    c.addEventListener("click", () => select(s.id));
+    slices.append(c);
+    offset += pct;
+  }
+  $("total").textContent = total;
+
+  $("legend").replaceChildren(...STATES.filter((s) => counts.get(s.id) || s.id >= 0 && s.id <= 2).map((s) => {
+    const swatch = el("i", {});
+    swatch.style.background = s.color;
+    const li = el("li", { className: selected === s.id ? "active" : "" },
+      swatch, el("span", { textContent: s.label }), el("span", { className: "n", textContent: counts.get(s.id) }));
+    li.addEventListener("click", () => select(s.id));
+    return li;
+  }));
+
+  renderList(aggrs);
+}
+
+function renderList(aggrs) {
+  if (!showList) return;
+  const rows = aggrs
+    .filter((a) => (selected === null ? a.state !== 0 : a.state === selected))
+    .sort((a, b) => severity(b.state) - severity(a.state) || a.title.localeCompare(b.title));
+  $("list").replaceChildren(...rows.map((a) => {
+    const s = STATES.find((x) => x.id === a.state);
+    const badge = el("span", { className: "badge", textContent: s.label });
+    badge.style.background = s.color;
+    const href = new URL("view.py", GUI_BASE);
+    href.searchParams.set("view_name", "aggr_single");
+    href.searchParams.set("aggr_name", a.title);
+    // _parent: replace the dashboard in Checkmk's main frame, not this iframe.
+    const link = el("a", { href: href.toString(), target: "_parent", textContent: a.title });
+    const flags = [a.acknowledged && "ack", a.inDowntime && "downtime"].filter(Boolean).join(", ");
+    return el("li", {}, badge, link, el("span", { className: "flag", textContent: flags }));
+  }));
+}
+
+// CRIT > UNKNOWN > WARN > PENDING > OK, matching Checkmk's worst-state ordering.
+function severity(state) {
+  return { 2: 4, 3: 3, 1: 2, "-1": 1, 0: 0 }[state];
+}
+
+function select(stateId) {
+  selected = selected === stateId ? null : stateId;
+  render(lastAggrs);
+}
+
+load();
+const refresh = params.has("refresh") ? Number(params.get("refresh")) : 60;
+if (refresh > 0) setInterval(load, refresh * 1000);
+</script>
+</body>
+</html>
