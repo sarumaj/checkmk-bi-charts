@@ -16,6 +16,11 @@ import checkmk_site
 from checkmk_site import AGGREGATION, SITE, STATE_ENDPOINT, Site
 
 
+pytestmark = pytest.mark.skipif(
+    not {"2.4", "2.5"} <= set(checkmk_site.VERSIONS), reason="needs Checkmk 2.4 and 2.5 (BI_PIE_VERSIONS)"
+)
+
+
 @pytest.fixture(scope="module")
 def updated_site() -> Iterator[Site]:
     site = checkmk_site.start("2.4")

@@ -19,7 +19,7 @@ import checkmk_site
 from checkmk_site import AGGREGATION, MONITORED_HOST, SITE, STATE_ENDPOINT, Site
 
 
-@pytest.fixture(scope="module", params=["2.4", "2.5"])
+@pytest.fixture(scope="module", params=checkmk_site.VERSIONS)
 def site(request: pytest.FixtureRequest) -> Iterator[Site]:
     site = checkmk_site.start(request.param)
     try:

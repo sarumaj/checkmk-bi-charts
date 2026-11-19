@@ -17,7 +17,9 @@ so this package embeds a small static page instead.
 
 ## Requirements
 
-- Checkmk 2.4.0 or 2.5.0, any edition
+- Checkmk 2.4.0 or 2.5.0, any edition: every version Checkmk maintains (2.3 left
+  maintenance on 2026-10-29). CI checks this every week against Checkmk's list of
+  releases and fails once a new version is out and not yet tested.
 - Viewers need access to BI. The shipped dashboard is a packaged one; with
   Checkmk's default permissions every role may see it.
 
@@ -38,7 +40,11 @@ The package then provides:
 ## Use it in your own dashboards
 
 Add a custom URL element (2.4) or an Embed URL widget (2.5) with a
-site-relative URL:
+site-relative URL. Checkmk's documentation lists them among the built-in
+elements of a dashboard:
+[Custom URL in 2.4](https://docs.checkmk.com/2.4.0/en/dashboards.html#builtin_dashlets),
+[Embed URL in 2.5](https://docs.checkmk.com/latest/en/dashboards.html#builtin_widgets)
+(the current documentation; Checkmk publishes no separate 2.5 address).
 
 ```
 local/bi_pie/index.html?group=WebApp&title=Web%20applications
@@ -168,16 +174,29 @@ instead, e.g. an older patch release.
 
 ## CI and releases
 
-`.forgejo/workflows/ci.yml` runs the unit tests, builds the MKP (kept as the
-run's artifact for 14 days) and then runs the integration tests, on every push
-to `main`, every pull request and every Monday, so that a new Checkmk patch
-release is tested before anyone updates to it.
+`.forgejo/workflows/ci.yml` runs on every push to `main`, every pull request,
+every tag and every Monday, so that a new Checkmk patch release is tested before
+anyone updates to it:
+
+| Job | What it does |
+|-----|--------------|
+| `unit` | the unit tests, and the MKP, kept as the run's artifact for 14 days |
+| `integration (Checkmk 2.4)` | `test_checkmk.py` on a 2.4 site |
+| `integration (Checkmk 2.5)` | `test_checkmk.py` on a 2.5 site |
+| `integration (update 2.4 to 2.5)` | `test_update.py` |
+| `release` | for a tag only, once all of the above passed: the MKP as a release |
+
+Each integration job builds an image with only its versions
+(`BI_PIE_VERSIONS`, default `2.4 2.5`); a new Checkmk version is one more entry
+in the matrix.
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/). The
 release bot tags the releases due from them (`.cz.toml`), writing the version
-into `build.py` and the install commands above; the tag then publishes the MKP
-with its SHA-256 as a release (`.forgejo/workflows/release.yml`). Renovate keeps
-the test tools in `requirements-test.txt` up to date.
+into `build.py` and the install commands above. The tag runs the whole
+pipeline, and its `release` job publishes the MKP with its SHA-256 as a release.
+The upload to the [Checkmk Exchange](https://exchange.checkmk.com/) stays by
+hand: it has no API, and Checkmk reviews every version. Renovate keeps the test
+tools in `requirements-test.txt` up to date.
 
 ## Verification status
 

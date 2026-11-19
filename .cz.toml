@@ -1,7 +1,7 @@
 # The release bot (release-bot on git.ciepiela.org) tags the releases due from the
 # Conventional Commits since the last tag and writes CHANGELOG.md; cz works locally too.
 # It writes the version into build.py (the MKP's manifest) and the install commands of
-# README.md; the tag then publishes the MKP (.forgejo/workflows/release.yml).
+# README.md; the tag then runs CI, whose release job publishes the MKP.
 [tool.commitizen]
 name = "cz_conventional_commits"
 tag_format = "v$version"

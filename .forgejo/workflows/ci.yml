@@ -1,9 +1,15 @@
 ---
-# The checks of every change: the unit tests (the package's sources, the MKP, the
-# page in a browser) and the MKP itself, then the integration tests on real
-# Checkmk 2.4 and 2.5 sites, built from Checkmk's newest patch releases
-# (tests/integration/packages.py). Weekly too, so that a new patch release of
-# Checkmk is tested with the package before anyone updates to it.
+# The checks of every change, and the release of every tag once they pass:
+# - unit: the package's sources, the MKP and the page in a browser; the MKP is
+#   kept as the run's artifact;
+# - integration: a matrix of real Checkmk sites, one job per version and one for
+#   the update from 2.4 to 2.5, installed from Checkmk's newest patch releases
+#   (tests/integration/packages.py);
+# - release: for a tag (vX.Y.Z, which the release bot pushes; .cz.toml), the MKP
+#   as a release, only when every job above passed.
+# Weekly too, so that a new patch release of Checkmk is tested with the package
+# before anyone updates to it. A failed release is run again from the run's page
+# (re-run failed jobs).
 name: CI
 # A failed job mails whoever started the run. Renovate's bot has no mailbox: when its
 # branch fails, Renovate opens a pull request, which mails the repository's watchers.
@@ -13,6 +19,7 @@ enable-email-notifications: true
   push:
     # renovate/all-patch: patches merge without a pull request once CI passes.
     branches: [main, renovate/all-patch]
+    tags: ["v*"]
   pull_request:
   schedule:
     - cron: "0 4 * * 1"
@@ -32,10 +39,24 @@ jobs:
         uses: https://github.com/actions/checkout@v7
 
       - name: Install the test tools
+        # The browser's libraries come from Ubuntu's mirrors, which do not always
+        # answer (2026-11-19: every integration job of a run failed here): three tries.
         run: &install |
           python3 -m venv .venv
           .venv/bin/pip install --quiet --disable-pip-version-check -r requirements-test.txt
-          .venv/bin/playwright install --with-deps chromium > /dev/null
+          for try in 1 2 3; do
+            .venv/bin/playwright install --with-deps chromium > /tmp/playwright.log 2>&1 && break
+            tail -5 /tmp/playwright.log
+            if [ "$try" = 3 ]; then exit 1; fi
+            echo "::warning::Installing the browser failed (try $try of 3), trying again in a minute"
+            sleep 60
+          done
+
+      # Checkmk's current versions (stable_downloads.json) against the matrix below
+      # and the manifest's range: the weekly run fails when Checkmk releases a new
+      # version, until the package is tested with it.
+      - name: Check the tested Checkmk versions
+        run: .venv/bin/python tests/integration/packages.py --check 2.4 2.5
 
       - name: Unit tests
         id: tests
@@ -62,11 +83,31 @@ jobs:
 
   integration:
     needs: unit
+    name: integration (${{ matrix.name }})
     # Docker (rootless) and loopback: the sites run in containers on published ports
-    # of 127.0.0.1, which the tests and the browser reach.
+    # of 127.0.0.1, which the tests and the browser reach. The runner takes one job
+    # at a time, so the matrix's jobs run one after the other.
     runs-on: ubuntu-latest
-    # The image takes about 6 minutes to build, each site 2 to 3 to set up.
-    timeout-minutes: 60
+    # The image takes a few minutes to build, each site 2 to 3 to set up.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      # The versions Checkmk maintains (the unit job checks the list), and the update
+      # between them.
+      matrix:
+        include:
+          - name: Checkmk 2.4
+            versions: "2.4"
+            tests: tests/integration/test_checkmk.py
+          - name: Checkmk 2.5
+            versions: "2.5"
+            tests: tests/integration/test_checkmk.py
+          - name: update 2.4 to 2.5
+            versions: "2.4 2.5"
+            tests: tests/integration/test_update.py
+    env:
+      # The versions the image holds (tests/integration/checkmk_site.py).
+      BI_PIE_VERSIONS: ${{ matrix.versions }}
     steps:
       - name: Check out
         uses: https://github.com/actions/checkout@v7
@@ -76,14 +117,74 @@ jobs:
 
       # Apart from the tests, so that the log shows which patch releases are tested.
       - name: Download Checkmk
-        run: .venv/bin/python tests/integration/packages.py 2.4 2.5
+        run: .venv/bin/python tests/integration/packages.py $BI_PIE_VERSIONS
 
       - name: Integration tests
         id: tests
-        run: .venv/bin/python -m pytest tests/integration --junitxml=/tmp/pytest.xml
+        run: .venv/bin/python -m pytest ${{ matrix.tests }} --junitxml=/tmp/pytest.xml
 
+      # One comment per matrix entry: the report is named after it.
       - name: Test report
         if: always() && steps.tests.outcome != 'skipped'
         uses: https://git.ciepiela.org/dawid/ci-actions/test-report@main
         with:
           junit: /tmp/pytest.xml
+          name: CI / integration (${{ matrix.name }})
+
+  release:
+    needs: [unit, integration]
+    if: startsWith(github.ref, 'refs/tags/v')
+    # Python, Node.js (the actions) and the tools forgejo-release calls.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Check out
+        uses: https://github.com/actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The tag names the version; build.py writes it into the MKP's name and manifest.
+      - name: Check the tag against the package's version
+        run: |
+          version=$(python3 -c 'import build; print(build.VERSION)')
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::$TAG is not the version in build.py ($version)"
+            exit 1
+          fi
+
+      - name: Build the MKP
+        run: |
+          python3 build.py
+          mkdir release && cp dist/*.mkp release/
+          (cd release && sha256sum *.mkp > SHA256SUMS)
+
+      # The changelog's section of the version; without one, the commits since the
+      # previous tag.
+      - name: Write the release notes
+        id: notes
+        run: |
+          previous=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          notes=$(awk -v v="${TAG#v}" '/^## / { if (found) exit; h = $2; sub(/^v/, "", h)
+            if (h == v) { found = 1; next } } found' CHANGELOG.md 2>/dev/null | sed '/./,$!d' || true)
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            notes=$(git log --no-merges --format='- %s' ${previous:+"$previous.."}"$TAG")
+          fi
+          {
+            echo 'notes<<END_OF_NOTES'
+            printf '%s\n' "$notes"
+            echo END_OF_NOTES
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish the release
+        uses: https://code.forgejo.org/actions/forgejo-release@v2
+        with:
+          direction: upload
+          url: ${{ github.server_url }}
+          repo: ${{ github.repository }}
+          tag: ${{ env.TAG }}
+          title: ${{ env.TAG }}
+          release-dir: release
+          override: false
+          release-notes: ${{ steps.notes.outputs.notes }}

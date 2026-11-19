@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Downloads the Checkmk packages the integration tests install.
 
-    python3 tests/integration/packages.py 2.4 2.5   # prints the path of each
+    python3 tests/integration/packages.py 2.4 2.5           # prints the path of each
+    python3 tests/integration/packages.py --check 2.4 2.5   # every maintained one tested?
 
 Takes the newest patch release of each version from Checkmk's list of stable
 releases, which also gives each package's SHA-256, in the free edition (Raw up
@@ -86,6 +87,35 @@ def packages(versions: list[str]) -> list[Package]:
     return [package(version, releases) for version in versions]
 
 
+def _number(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def check(tested: list[str]) -> list[str]:
+    """What keeps the package from covering every version Checkmk maintains: a
+    current ("stable") version that is not tested, or one outside the manifest's
+    version.min_required and version.usable_until."""
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    import build  # pylint: disable=import-outside-toplevel
+
+    lowest, beyond = build.MANIFEST["version.min_required"], build.MANIFEST["version.usable_until"]
+    problems = []
+    for key, release in sorted(_releases().items(), key=lambda item: _number(item[0])):
+        if release.get("class") != "stable":
+            continue
+        version = key.removesuffix(".0")
+        if version not in tested:
+            problems.append(f"Checkmk {release['version']} is maintained, but not tested")
+        if not _number(str(lowest)) <= _number(key) < _number(str(beyond)):
+            problems.append(f"Checkmk {key} is maintained, but outside the manifest's {lowest} to {beyond}")
+    return problems
+
+
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--check"]:
+        # The versions CI tests (its matrix) against those Checkmk maintains.
+        found = check(sys.argv[2:])
+        print("\n".join(found) or "Every version Checkmk maintains is tested: " + ", ".join(sys.argv[2:]))
+        sys.exit(1 if found else 0)
     for found in packages(sys.argv[1:] or ["2.4", "2.5"]):
         print(found.path)
