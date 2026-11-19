@@ -1,8 +1,9 @@
 # bi_charts: charts of Checkmk BI aggregations
 
 A dashboard element with charts of Checkmk BI aggregations: their states as a
-pie, the BI trees as rings, a treemap or a tree of nodes, and the states per
-group as donuts or bars, with a list of the aggregations that are not OK.
+pie or as tiles, the BI trees as rings, a treemap or a tree of nodes, the states
+per group as donuts or bars, and the hosts and services that drag the most
+aggregations down, with a list of the aggregations that are not OK.
 Checkmk has no such charts for BI and no way to add custom widget types in 2.5,
 so this package embeds a static page instead. It draws with
 [Apache ECharts](https://echarts.apache.org/), which the package includes.
@@ -16,6 +17,8 @@ so this package embeds a static page instead. It draws with
 ![The tree with sample data](docs/screenshot-tree.png)
 
 ![Donuts and bars per group with sample data](docs/screenshot-groups.png)
+
+![Tiles and impact with sample data](docs/screenshot-tiles.png)
 
 ![Hover details with sample data](docs/screenshot-hover.png)
 
@@ -61,12 +64,13 @@ local/bi_charts/index.html?view=bars&group=WebApp&group=Storage&group=Network
 
 | Parameter | Meaning |
 |-----------|---------|
-| `view` | `pie` (default), `rings`, `treemap`, `tree`, `groups` or `bars`, see below |
+| `view` | `pie` (default), `rings`, `treemap`, `tree`, `groups`, `bars`, `tiles` or `impact`, see below |
 | `group` | BI aggregation group to include, repeatable; the groups of `groups` and `bars` |
 | `name` | Aggregation title to include, repeatable |
 | `by` | `groups`, `bars`: `group` (default when `group` is given) or `pack` (BI pack, otherwise) |
 | `depth` | `rings`, `treemap`, `tree`: levels of rules shown, default 3 |
 | `max` | Views of the trees: most aggregations to load, default 40 |
+| `top` | `impact`: most hosts and services shown, default 15 |
 | `title` | Heading above the chart |
 | `refresh` | Reload interval in seconds, default 60, `0` disables |
 | `theme` | `dark` or `light`; default: the Checkmk theme of the embedding page |
@@ -92,6 +96,8 @@ list links to the aggregation's BI view.
 | `tree` | The BI trees as a tree of nodes, folded below `depth`; a click opens or folds a node | Reading the structure of a few aggregations |
 | `groups` | One donut per group, its OK share in the middle | Comparing groups at a glance |
 | `bars` | One stacked bar per group, a segment per state | Comparing groups by the number of aggregations |
+| `tiles` | One hexagon per aggregation, the worst first, its name inside | Many aggregations at a glance, on a wall screen |
+| `impact` | One bar per host or service that is not OK, as long as the aggregations it is part of, a segment per state of those | What to fix first |
 
 **Rings:** the innermost ring holds the aggregations, in the same order as the
 pie. Each further ring, up to `depth`, is the next level of rules: the rules
@@ -104,6 +110,19 @@ narrow segment, bent along the ring in a wide one, and never upside down. A
 name is left out where it would be cut to fewer than eight characters (six when
 bent), so how many names show depends on the element's size. Hovering a segment keeps its path to the aggregation in full
 color.
+
+**Tiles:** need only the states, not the trees, so they work for any number
+of aggregations. A tile also says when its aggregation is acknowledged or in
+downtime; clicking it shows its state below the chart.
+
+**Impact:** walks the trees for the hosts and services that are not OK, and
+ranks them by how many of their aggregations are not OK, then by how many
+aggregations they are part of. A host or service shared by many aggregations
+(a core switch, a storage system) comes first. The dot before a name is its
+own state; the segments are the states of its aggregations, and clicking one
+narrows the list to those. `top` sets the number of rows. Being part of an
+aggregation that is not OK does not prove it is the cause: a rule may tolerate
+one failed member.
 
 **Groups and bars:** the state endpoint does not say which group an
 aggregation belongs to, so `by=group` asks once per `group` given, and
@@ -126,6 +145,9 @@ Hovering shows a details box next to the pointer:
   service, and how many hosts and services sit below it per state. Clicking it
   keeps its path on display below the chart.
 - **Group (donut, bar):** the group's aggregations per state.
+- **Tile:** the aggregation's state and flags.
+- **Impact bar:** the host's or service's state, and its aggregations per
+  state (the first eight, worst first).
 
 Hovering a legend row fades everything of another state.
 

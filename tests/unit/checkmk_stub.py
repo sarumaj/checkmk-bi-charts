@@ -63,6 +63,9 @@ class Stub(ThreadingHTTPServer):
     tree_result_code: int = 0
     parent_theme: str = "modern-dark"
     tree_requests: int = 0
+    # Aggregation title -> more (host, service, state) leaves below its root, for hosts
+    # and services that several aggregations share.
+    extra_leaves: dict[str, list[tuple[str, str, int]]] = {}
 
     @property
     def base(self) -> str:
@@ -119,7 +122,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.server.tree_result_code:
                 answer = {"result_code": 1, "result": "tree unavailable", "severity": "error"}
             else:
-                answer = {"result_code": 0, "result": {"node_config": {"hierarchy": tree(title)}}, "severity": "success"}
+                root = tree(title)
+                extra = self.server.extra_leaves.get(title, [])
+                root["children"] += [_leaf(host, service, state) for host, service, state in extra]  # type: ignore[operator]
+                answer = {"result_code": 0, "result": {"node_config": {"hierarchy": root}}, "severity": "success"}
             self._send(200, "application/json", json.dumps(answer).encode())
         else:
             self._send(404, "text/plain", b"not found")
