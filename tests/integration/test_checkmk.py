@@ -2,8 +2,9 @@
 
     pytest tests/integration/test_checkmk.py
 
-Needs Docker, pytest-testinfra, requests, pytest-playwright and a browser. Each
-version pulls an image of about 1 GB and takes a few minutes.
+Needs Docker, pytest-testinfra, requests, pytest-playwright and a browser. The
+first run downloads Checkmk's packages (about 600 MB) and builds the image from
+them (several minutes); each site then takes a minute or two.
 """
 
 import json
@@ -40,7 +41,10 @@ def test_package_installs_its_files(site: Site, path: str) -> None:
     installed = site.host.file(path)
     assert installed.is_file
     assert installed.user == SITE
-    assert installed.mode == 0o644
+    # The site's Apache and GUI run as the site user. mkp writes with the site's umask
+    # (0077 in its .profile), so the file is the user's alone: 0600.
+    assert installed.mode & 0o400
+    assert not installed.mode & 0o022
 
 
 def test_package_is_enabled(site: Site) -> None:
@@ -141,7 +145,12 @@ def test_page_draws_the_tree_in_a_browser(page: Page, site: Site) -> None:
     expect(page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]')).to_have_count(1)
     # At least the aggregation, one rule below it and one host or service.
     assert page.locator("path.seg").count() >= 3
-    page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]').hover()
+    # The only aggregation's segment is a whole ring: the middle of its box is the
+    # hole, where the total sits. Its top, just inside the outer edge, is the ring.
+    segment = page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]')
+    box = segment.bounding_box()
+    assert box
+    segment.hover(position={"x": box["width"] / 2, "y": box["height"] * 0.03})
     expect(page.locator("#tip")).to_contain_text("Rule default / host")
 
 
