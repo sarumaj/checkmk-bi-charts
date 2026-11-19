@@ -1,11 +1,11 @@
 """Starts Checkmk sites in Docker and prepares them for the integration tests.
 
 The sites run in an image built here from Checkmk's own packages
-(packages.py: the newest patch release of 2.4 and of 2.5, checked against the
-SHA-256 Checkmk publishes) on Debian 12. Both versions are installed in the
-image, so a site created with 2.4 can be updated to 2.5 in its container with
-``omd update``, as on a server. The image is built once per pair of packages
-and kept; a new patch release builds a new one.
+(packages.py: the newest patch release of each version, checked against the
+SHA-256 Checkmk publishes) on Debian 12. The image holds the versions named in
+BI_PIE_VERSIONS (default "2.4 2.5"), so a site created with 2.4 can be updated
+to 2.5 in its container with ``omd update``, as on a server. It is built once
+per set of packages and kept; a new patch release builds a new one.
 """
 
 import hashlib
@@ -35,7 +35,8 @@ PASSWORD = "bi-pie-integration"
 MONITORED_HOST = "bipie-test"
 # The default BI pack's rule "host" titles its aggregations like this.
 AGGREGATION = f"Host {MONITORED_HOST}"
-VERSIONS = ["2.4", "2.5"]
+# The versions of this run, each a job of CI's matrix: the image holds only these.
+VERSIONS = os.environ.get("BI_PIE_VERSIONS", "2.4 2.5").split()
 # The site's own Apache listens here, inside the container.
 PORT = 5000
 DOCKERFILE = Path(__file__).parent / "image" / "Dockerfile"
