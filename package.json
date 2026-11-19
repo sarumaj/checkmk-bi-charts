@@ -1,0 +1,9 @@
+{
+  "name": "checkmk-bi-charts",
+  "private": true,
+  "description": "The page's chart library; build.py copies it into the MKP.",
+  "license": "GPL-2.0-or-later",
+  "dependencies": {
+    "echarts": "6.1.0"
+  }
+}

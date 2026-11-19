@@ -3,7 +3,7 @@
 The sites run in an image built here from Checkmk's own packages
 (packages.py: the newest patch release of each version, checked against the
 SHA-256 Checkmk publishes) on Debian 12. The image holds the versions named in
-BI_PIE_VERSIONS (default "2.4 2.5"), so a site created with 2.4 can be updated
+BI_CHARTS_VERSIONS (default "2.4 2.5"), so a site created with 2.4 can be updated
 to 2.5 in its container with ``omd update``, as on a server. It is built once
 per set of packages and kept; a new patch release builds a new one.
 """
@@ -31,12 +31,12 @@ import packages  # noqa: E402
 
 SITE = "cmk"
 USER = "cmkadmin"
-PASSWORD = "bi-pie-integration"
-MONITORED_HOST = "bipie-test"
+PASSWORD = "bi-charts-integration"
+MONITORED_HOST = "bicharts-test"
 # The default BI pack's rule "host" titles its aggregations like this.
 AGGREGATION = f"Host {MONITORED_HOST}"
 # The versions of this run, each a job of CI's matrix: the image holds only these.
-VERSIONS = os.environ.get("BI_PIE_VERSIONS", "2.4 2.5").split()
+VERSIONS = os.environ.get("BI_CHARTS_VERSIONS", "2.4 2.5").split()
 # The site's own Apache listens here, inside the container.
 PORT = 5000
 DOCKERFILE = Path(__file__).parent / "image" / "Dockerfile"
@@ -94,7 +94,7 @@ def image() -> str:
     """The image with both versions installed, built unless it exists."""
     found = list(_packages().values())
     digest = hashlib.sha256(" ".join(p.path.name for p in found).encode() + DOCKERFILE.read_bytes()).hexdigest()
-    tag = f"bi-pie-checkmk:{digest[:12]}"
+    tag = f"bi-charts-checkmk:{digest[:12]}"
     if _docker("images", "--quiet", tag):
         return tag
     # The build context holds the packages and nothing else, as hard links where
@@ -127,9 +127,10 @@ def _wait(site: Site, timeout: float) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            if requests.get(site.url + "login.py", timeout=5).status_code == 200:
+            if requests.get(site.url + "login.py", timeout=10).status_code == 200:
                 return
-        except requests.ConnectionError:
+        # Refused before Apache listens, slow while the site starts up.
+        except (requests.ConnectionError, requests.Timeout):
             pass
         time.sleep(3)
     raise TimeoutError(f"Checkmk {site.version} did not answer within {timeout:.0f} s")

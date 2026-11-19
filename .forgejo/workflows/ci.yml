@@ -39,9 +39,11 @@ jobs:
         uses: https://github.com/actions/checkout@v7
 
       - name: Install the test tools
+        # The chart library (package-lock.json) goes into the MKP, the tools into a venv.
         # The browser's libraries come from Ubuntu's mirrors, which do not always
         # answer (2026-11-19: every integration job of a run failed here): three tries.
         run: &install |
+          npm ci --no-audit --no-fund --ignore-scripts
           python3 -m venv .venv
           .venv/bin/pip install --quiet --disable-pip-version-check -r requirements-test.txt
           for try in 1 2 3; do
@@ -107,7 +109,7 @@ jobs:
             tests: tests/integration/test_update.py
     env:
       # The versions the image holds (tests/integration/checkmk_site.py).
-      BI_PIE_VERSIONS: ${{ matrix.versions }}
+      BI_CHARTS_VERSIONS: ${{ matrix.versions }}
     steps:
       - name: Check out
         uses: https://github.com/actions/checkout@v7
@@ -117,7 +119,7 @@ jobs:
 
       # Apart from the tests, so that the log shows which patch releases are tested.
       - name: Download Checkmk
-        run: .venv/bin/python tests/integration/packages.py $BI_PIE_VERSIONS
+        run: .venv/bin/python tests/integration/packages.py $BI_CHARTS_VERSIONS
 
       - name: Integration tests
         id: tests
@@ -153,6 +155,9 @@ jobs:
             echo "::error::$TAG is not the version in build.py ($version)"
             exit 1
           fi
+
+      - name: Install the chart library
+        run: npm ci --no-audit --no-fund --ignore-scripts
 
       - name: Build the MKP
         run: |

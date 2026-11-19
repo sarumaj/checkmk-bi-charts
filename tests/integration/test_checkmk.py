@@ -9,6 +9,7 @@ them (several minutes); each site then takes a minute or two.
 
 import json
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 import requests
@@ -33,8 +34,8 @@ def site(request: pytest.FixtureRequest) -> Iterator[Site]:
 @pytest.mark.parametrize(
     "path",
     [
-        pytest.param(f"/omd/sites/{SITE}/local/share/check_mk/web/htdocs/bi_pie/index.html", id="page"),
-        pytest.param(f"/omd/sites/{SITE}/local/lib/python3/cmk/gui/plugins/dashboard/bi_pie", id="dashboard"),
+        pytest.param(f"/omd/sites/{SITE}/local/share/check_mk/web/htdocs/bi_charts/index.html", id="page"),
+        pytest.param(f"/omd/sites/{SITE}/local/lib/python3/cmk/gui/plugins/dashboard/bi_charts", id="dashboard"),
     ],
 )
 def test_package_installs_its_files(site: Site, path: str) -> None:
@@ -56,9 +57,14 @@ def test_package_is_enabled(site: Site) -> None:
 
 
 def test_page_is_served(site: Site) -> None:
-    response = site.gui().get(site.url + "local/bi_pie/index.html")
+    gui = site.gui()
+    response = gui.get(site.url + "local/bi_charts/index.html")
     assert response.status_code == 200
     assert "<title>BI aggregation states</title>" in response.text
+    # The chart library beside it, as JavaScript.
+    response = gui.get(site.url + "local/bi_charts/echarts.min.js")
+    assert response.status_code == 200
+    assert "javascript" in response.headers["Content-Type"]
 
 
 def test_state_endpoint_accepts_the_session_cookie(site: Site) -> None:
@@ -113,14 +119,14 @@ def test_packaged_dashboard_embeds_the_page(site: Site) -> None:
     gui = site.gui()
     if site.version == "2.4":
         # 2.4 renders the widget's iframe into the dashboard page.
-        response = gui.get(site.url + "dashboard.py", params={"name": "bi_pie"})
+        response = gui.get(site.url + "dashboard.py", params={"name": "bi_charts"})
     else:
         # 2.5 builds the dashboard in the browser from this endpoint.
         response = gui.get(
-            site.url + "api/unstable/objects/dashboard_relative_grid/bi_pie", headers={"Accept": "application/json"}
+            site.url + "api/unstable/objects/dashboard_relative_grid/bi_charts", headers={"Accept": "application/json"}
         )
     assert response.status_code == 200, response.text[:500]
-    assert "local/bi_pie/index.html" in response.text
+    assert "local/bi_charts/index.html" in response.text
 
 
 def _log_in(page: Page, site: Site) -> None:
@@ -130,33 +136,52 @@ def _log_in(page: Page, site: Site) -> None:
     )
 
 
-def test_page_draws_the_flat_pie_in_a_browser(page: Page, site: Site) -> None:
+def _items(page: Page, kind: str) -> list[dict[str, Any]]:
+    """The chart's items of one kind (the page's hook), once there are any."""
+    page.wait_for_function(
+        "(kind) => window.biCharts && biCharts.items().some((i) => i.kind === kind)", arg=kind, timeout=60_000
+    )
+    return [i for i in page.evaluate("biCharts.items()") if i["kind"] == kind]
+
+
+def test_page_draws_the_pie_in_a_browser(page: Page, site: Site) -> None:
     _log_in(page, site)
-    page.goto(site.url + "local/bi_pie/index.html")
+    page.goto(site.url + "local/bi_charts/index.html")
     expect(page.locator("#msg.err")).to_have_count(0)
     expect(page.locator("#total")).to_have_text("1")
-    expect(page.locator("circle.slice")).to_have_count(1)
+    assert len(_items(page, "state")) == 1
 
 
-def test_page_draws_the_tree_in_a_browser(page: Page, site: Site) -> None:
+@pytest.mark.parametrize("view", ["rings", "treemap", "tree"])
+def test_page_draws_the_trees_in_a_browser(page: Page, site: Site, view: str) -> None:
     _log_in(page, site)
-    page.goto(site.url + "local/bi_pie/index.html?view=tree&depth=5")
+    page.goto(site.url + f"local/bi_charts/index.html?view={view}&depth=5")
     expect(page.locator("#msg.err")).to_have_count(0)
-    expect(page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]')).to_have_count(1)
-    # At least the aggregation, one rule below it and one host or service.
-    assert page.locator("path.seg").count() >= 3
-    # The only aggregation's segment is a whole ring: the middle of its box is the
-    # hole, where the total sits. Its top, just inside the outer edge, is the ring.
-    segment = page.locator(f'path.seg[aria-label^="{AGGREGATION}:"]')
-    box = segment.bounding_box()
-    assert box
-    segment.hover(position={"x": box["width"] / 2, "y": box["height"] * 0.03})
-    expect(page.locator("#tip")).to_contain_text("Rule default / host")
+    assert [i["path"] for i in _items(page, "aggregation")] == [AGGREGATION]
+    # At least one rule below the aggregation, and the host's services below.
+    assert _items(page, "rule")
+    leaves = _items(page, "service") + [i for i in page.evaluate("biCharts.items()") if i["kind"] == "host"]
+    assert any(MONITORED_HOST in i["path"] for i in leaves)
+    # Hovering the aggregation tells its rule.
+    item = _items(page, "aggregation")[0]
+    page.evaluate(
+        "([s, d]) => biCharts.chart.dispatchAction({ type: 'showTip', seriesIndex: s, dataIndex: d })",
+        [item["seriesIndex"], item["dataIndex"]],
+    )
+    expect(page.locator(".tip")).to_contain_text("Rule default / host")
+
+
+def test_page_draws_the_groups_in_a_browser(page: Page, site: Site) -> None:
+    _log_in(page, site)
+    # Per BI pack, the default: the site's one aggregation is of the pack "default".
+    page.goto(site.url + "local/bi_charts/index.html?view=groups")
+    expect(page.locator("#msg.err")).to_have_count(0)
+    assert [i["path"].split(" › ")[0] for i in _items(page, "group-state")] == ["default"]
 
 
 def test_dashboard_shows_the_widget_in_a_browser(page: Page, site: Site) -> None:
     _log_in(page, site)
-    page.goto(site.url + "dashboard.py?name=bi_pie")
-    widget = page.frame_locator('iframe[src*="local/bi_pie/index.html"]')
+    page.goto(site.url + "dashboard.py?name=bi_charts")
+    widget = page.frame_locator('iframe[src*="local/bi_charts/index.html"]')
     expect(widget.locator("#total")).to_have_text("1")
     expect(widget.locator("#msg.err")).to_have_count(0)
