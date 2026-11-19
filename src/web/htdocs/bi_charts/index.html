@@ -72,6 +72,10 @@
   #center { position: absolute; inset: 0; display: flex; flex-direction: column;
             align-items: center; justify-content: center; pointer-events: none; }
   body:not(.view-pie):not(.view-rings) #center { display: none; }
+  /* Names bent along the rings (drawArcs), over the chart; the pointer goes through. */
+  #arcs { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
+          overflow: visible; }
+  #arcs text { font-weight: 700; }
   #total { font-weight: 700; line-height: 1; }
   #sub { color: var(--muted); }
   #detail { margin-top: 6px; min-height: 1.4em; }
@@ -113,6 +117,7 @@
 <div id="wrap">
   <div id="stage">
     <div id="chart" role="img" aria-label="BI aggregation states"></div>
+    <svg id="arcs" aria-hidden="true"></svg>
     <div id="center"><span id="total"></span><span id="sub">aggregations</span></div>
   </div>
   <table id="legend"></table>
@@ -512,6 +517,7 @@ function render(chartOnly) {
     groups: () => groupsOption(aggrs, groups),
     bars: () => barsOption(aggrs, groups),
   }[shown]());
+  $("arcs").replaceChildren();
   chart.setOption(option, { notMerge: true });
 
   const total = aggrs.length;
@@ -540,6 +546,73 @@ function heightOf(shown) {
   return null;
 }
 
+// A name's color on a state's fill: black on the bright problem colors and on OK in
+// a light theme, light on the pale OK of a dark one.
+function labelColor(stateId) {
+  const dark = stateId === 0 && muted && !document.body.classList.contains("light");
+  return dark ? "#e8e8e8" : "#000000cc";
+}
+
+// The names bent along the ring of their slice or segment (an item's `arc` in refs:
+// its text, color and size), from the layout ECharts computed: in an SVG over the
+// chart, as ECharts writes text only straight. Each reads from left to right, so on
+// the lower half it runs the other way round the circle; it shows where it fits whole
+// or with at least six characters before the ellipsis. Drawn whenever the chart has
+// finished drawing (resize, refresh, a fading legend row).
+function drawArcs() {
+  const svg = $("arcs");
+  svg.replaceChildren();
+  const model = chart.getModel();
+  if (!showLabels || !model) return;
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  let count = 0;
+  model.eachSeries((series) => {
+    const data = series.getData();
+    for (let i = 0; i < data.count(); i++) {
+      const entry = refs.get(data.getId(i));
+      const layout = entry && entry.arc ? data.getItemLayout(i) : null;
+      if (!layout || layout.r == null) continue;
+      const r0 = layout.r0 || 0, middle = (r0 + layout.r) / 2;
+      const size = entry.arc.size || Math.min(12, (layout.r - r0) * 0.5);
+      if (size < 8) continue;
+      let lo = Math.min(layout.startAngle, layout.endAngle), hi = Math.max(layout.startAngle, layout.endAngle);
+      // A whole ring: its name over the top.
+      if (hi - lo >= 2 * Math.PI - 1e-6) {
+        lo = -Math.PI;
+        hi = 0;
+      }
+      const text = entry.arc.text;
+      const chars = Math.floor((hi - lo) * middle * 0.88 / (size * 0.6));
+      if (chars < Math.min(text.length, 6)) continue;
+      // Angles as ECharts lays them out: 0 to the right, growing clockwise (y down).
+      const point = (a) => (layout.cx + middle * Math.cos(a)).toFixed(2) + "," +
+        (layout.cy + middle * Math.sin(a)).toFixed(2);
+      const large = hi - lo > Math.PI ? 1 : 0;
+      const below = Math.sin((lo + hi) / 2) > 0.01;
+      const arc = document.createElementNS(SVG_NS, "path");
+      arc.id = "arc-" + count++;
+      arc.setAttribute("fill", "none");
+      arc.setAttribute("d", below
+        ? "M" + point(hi) + "A" + middle + "," + middle + " 0 " + large + ",0 " + point(lo)
+        : "M" + point(lo) + "A" + middle + "," + middle + " 0 " + large + ",1 " + point(hi));
+      const label = document.createElementNS(SVG_NS, "text");
+      label.setAttribute("font-size", size.toFixed(1));
+      label.setAttribute("fill", entry.arc.color);
+      // Faded with its segment while a legend row is hovered.
+      const fillColor = String(data.getItemVisual(i, "style").fill || "");
+      if (fillColor.length === 9 && parseInt(fillColor.slice(7), 16) / 255 < 0.3) label.setAttribute("opacity", "0.3");
+      const along = document.createElementNS(SVG_NS, "textPath");
+      along.setAttribute("href", "#" + arc.id);
+      along.setAttribute("startOffset", "50%");
+      along.setAttribute("text-anchor", "middle");
+      along.setAttribute("dominant-baseline", "central");
+      along.textContent = text.length > chars ? text.slice(0, chars - 1) + "\u2026" : text;
+      label.append(along);
+      svg.append(arc, label);
+    }
+  });
+}
+
 function pieOption(aggrs) {
   const counts = countStates(aggrs);
   const present = STATES.filter((s) => counts.get(s.id));
@@ -554,7 +627,8 @@ function pieOption(aggrs) {
       data: present.map((s) => ({
         name: s.label,
         value: counts.get(s.id),
-        id: ref({ path: [s.label], state: s.id, kind: "state" }),
+        id: ref({ path: [s.label], state: s.id, kind: "state",
+                  arc: showLabels ? { text: s.label + " " + counts.get(s.id), color: labelColor(s.id) } : undefined }),
         stateId: s.id,
         itemStyle: { color: fill(s.id), borderColor: selected === s.id ? css("--fg") : "transparent",
                      borderWidth: selected === s.id ? 2 : 0 },
@@ -589,16 +663,20 @@ function ringsOption(aggrs, trees) {
     const r0 = (inner + level * step) * radius, r1 = r0 + step * radius;
     const arc = 2 * Math.PI * node.leaves / allLeaves * (r0 + r1) / 2;
     const deep = r1 - r0;
-    // Along the radius in a narrow segment, along the ring in a wide one.
+    // Along the radius in a narrow segment; bent along the ring in a wide one, which
+    // drawArcs draws once ECharts has laid the segment out.
     const along = arc > 2.5 * deep;
+    if (along) {
+      const size = Math.min(11, deep * 0.55);
+      return size < 8 ? { show: false } : { show: false, curve: { text: node.name, size, color: labelColor(node.state) } };
+    }
     const width = along ? arc * 0.85 : deep - 6;
     const size = Math.min(11, Math.max(8, (along ? deep : arc) * 0.55));
     const fits = Math.floor(width / (size * 0.6));
     // Whole, or at least 8 characters before the ellipsis; else none.
     if (fits < Math.min(node.name.length, 8) || (along ? deep : arc) < 9) return { show: false };
-    const dark = node.state === 0 && muted && !document.body.classList.contains("light");
-    return { show: true, rotate: along ? "tangential" : "radial", width, overflow: "truncate",
-             fontSize: size, fontWeight: 700, color: dark ? "#e8e8e8" : "#000000cc" };
+    return { show: true, rotate: "radial", width, overflow: "truncate", fontSize: size, fontWeight: 700,
+             color: labelColor(node.state) };
   }
 
   function build(node, level, path) {
@@ -610,11 +688,12 @@ function ringsOption(aggrs, trees) {
     }
     const children = node.children.flatMap((c) => build(c, level + 1, here));
     if (level >= rings) return children;
+    const named = label(node, level);
     return [{
       name: node.name,
-      id: ref({ path: here, node, kind: level === 0 ? "aggregation" : "rule" }),
+      id: ref({ path: here, node, kind: level === 0 ? "aggregation" : "rule", arc: named.curve }),
       itemStyle: { color: fill(node.state) },
-      label: label(node, level),
+      label: { ...named, curve: undefined },
       tip: () => nodeTip(node, here),
       children,
     }];
@@ -891,6 +970,8 @@ function showDetail(entry) {
     el("span", { textContent: entry.path.join(" › ") + ": " + state.label + " " }),
     el("span", { className: "flag", textContent: flags }));
 }
+
+chart.on("finished", drawArcs);
 
 chart.on("click", (p) => {
   const entry = p.data && p.data.id && refs.get(p.data.id);

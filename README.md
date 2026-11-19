@@ -86,7 +86,7 @@ list links to the aggregation's BI view.
 
 | View | Shows | Best for |
 |------|-------|----------|
-| `pie` | One slice per state, the number of aggregations in the middle | A small element, any number of aggregations |
+| `pie` | One slice per state, its name and count along the ring where they fit, the number of aggregations in the middle | A small element, any number of aggregations |
 | `rings` | The BI trees as rings, hosts and services as pills around them | Following a problem from an aggregation down to a service |
 | `treemap` | The BI trees as nested rectangles, sized by hosts and services; a click zooms in | Many aggregations at once |
 | `tree` | The BI trees as a tree of nodes, folded below `depth`; a click opens or folds a node | Reading the structure of a few aggregations |
@@ -99,10 +99,10 @@ an aggregation is built from and the rules those call (also across BI packs).
 Every segment's angle is its share of the hosts and services. The hosts and
 services themselves are pills in a thin band around the rings, however deep
 they sit in the tree, so the band shows every problem even when the rings stop
-early. A segment wide enough carries its name, along the radius in a narrow
-segment and along the ring in a wide one; a name is left out where it would be
-cut to fewer than eight characters, so how many names show depends on the
-element's size. Hovering a segment keeps its path to the aggregation in full
+early. A segment wide enough carries its name: straight along the radius in a
+narrow segment, bent along the ring in a wide one, and never upside down. A
+name is left out where it would be cut to fewer than eight characters (six when
+bent), so how many names show depends on the element's size. Hovering a segment keeps its path to the aggregation in full
 color.
 
 **Groups and bars:** the state endpoint does not say which group an
