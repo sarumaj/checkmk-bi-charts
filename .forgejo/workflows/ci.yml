@@ -1,7 +1,7 @@
 ---
 # The checks of every change, and the release of every tag once they pass:
-# - unit: the package's sources, the MKP and the page in a browser; the MKP is
-#   kept as the run's artifact;
+# - unit: the page's modules in Node.js, the package's sources, the MKP and the page
+#   in a browser; the MKP is kept as the run's artifact;
 # - integration: a matrix of real Checkmk sites, one job per version and one for
 #   the update from 2.4 to 2.5, installed from Checkmk's newest patch releases
 #   (tests/integration/packages.py);
@@ -39,8 +39,9 @@ jobs:
         uses: https://github.com/actions/checkout@v7
 
       - name: Install the test tools
-        # The chart library (package-lock.json) goes into the MKP; the project, with the
-        # build command build-mkp and the test tools (pyproject.toml), into a venv.
+        # The page's build tool and chart library (package-lock.json), which build-mkp
+        # bundles into the page; the project, with the build command build-mkp and the
+        # test tools (pyproject.toml), into a venv.
         # The browser's libraries come from Ubuntu's mirrors, which do not always
         # answer (2026-11-19: every integration job of a run failed here): three tries.
         run: &install |
@@ -60,6 +61,10 @@ jobs:
       # version, until the package is tested with it.
       - name: Check the tested Checkmk versions
         run: .venv/bin/python tests/integration/packages.py --check 2.4 2.5
+
+      # The modules of the page that need no browser (tests/js).
+      - name: Tests of the page's modules
+        run: npm test
 
       - name: Unit tests
         id: tests
@@ -164,7 +169,7 @@ jobs:
             exit 1
           fi
 
-      - name: Install the chart library
+      - name: Install the page's build tool and chart library
         run: npm ci --no-audit --no-fund --ignore-scripts
 
       - name: Build the MKP

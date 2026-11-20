@@ -1,0 +1,62 @@
+:root { --fg: #e8e8e8; --muted: #9aa3ad; --ring: #2c3844; --gap: #1e262e; --tip-bg: #161c22; }
+body.light { --fg: #1e262e; --muted: #5b6770; --ring: #dfe3e8; --gap: #ffffff; --tip-bg: #ffffff; }
+html, body { margin: 0; height: 100%; background: transparent; }
+body { color: var(--fg); font: 13px/1.4 "Lato", "Helvetica Neue", Arial, sans-serif;
+       display: flex; flex-direction: column; padding: 8px; box-sizing: border-box; }
+h1 { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
+#wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; flex: 0 0 auto; }
+#stage { position: relative; flex: 0 0 auto; }
+/* Round charts are square; the others take the width and a good part of the height. */
+#chart { width: min(45vw, 60vh, 240px); aspect-ratio: 1; }
+body.view-rings #chart { width: min(60vw, 80vh, 440px); }
+body.view-treemap #stage, body.view-tree #stage, body.view-groups #stage, body.view-bars #stage,
+body.view-tiles #stage, body.view-impact #stage, body.view-sankey #stage { flex: 1 1 100%; }
+body.view-treemap #chart, body.view-tree #chart,
+body.view-sankey #chart { width: 100%; aspect-ratio: auto; height: max(240px, 65vh); }
+body.view-groups #chart, body.view-bars #chart, body.view-tiles #chart,
+body.view-impact #chart { width: 100%; aspect-ratio: auto; height: max(200px, 45vh); }
+/* The total in the middle of the round charts. */
+#center { position: absolute; inset: 0; display: flex; flex-direction: column;
+          align-items: center; justify-content: center; pointer-events: none; }
+body:not(.view-pie):not(.view-rings) #center { display: none; }
+/* Names bent along the rings (drawArcs), over the chart; the pointer goes through. */
+#arcs { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
+        overflow: visible; }
+#arcs text { font-weight: 700; }
+#total { font-weight: 700; line-height: 1; }
+#sub { color: var(--muted); }
+#detail { margin-top: 6px; min-height: 1.4em; }
+#detail .flag { color: var(--muted); font-size: 11px; }
+#legend { border-collapse: collapse; }
+#legend th { font-weight: 400; font-size: 11px; color: var(--muted); text-align: right;
+             padding: 0 0 2px 14px; }
+#legend td { padding: 1px 0; }
+#legend tbody tr { cursor: pointer; }
+#legend tr.active { font-weight: 700; }
+#legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block;
+            margin-right: 6px; }
+#legend td.n { text-align: right; padding-left: 14px; font-variant-numeric: tabular-nums; }
+#legend td.pct { color: var(--muted); }
+#legend td.bar { padding-left: 8px; }
+#legend .track { display: inline-block; width: 48px; height: 5px; border-radius: 3px;
+                 background: var(--ring); overflow: hidden; vertical-align: middle; }
+#legend .fill { display: block; height: 100%; }
+.tip { max-width: min(320px, 90vw); white-space: normal !important; }
+.tip .head { font-weight: 700; }
+.tip .path, .tip .more { color: var(--muted); }
+.tip ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.tip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 5px; }
+#list { list-style: none; margin: 8px 0 0; padding: 0; overflow: auto; flex: 1 1 auto; }
+#list li { display: flex; gap: 6px; align-items: baseline; padding: 1px 0; }
+#list .badge { font-size: 10px; font-weight: 700; color: #000; border-radius: 2px;
+               padding: 0 4px; flex: 0 0 auto; }
+#list a { color: inherit; text-decoration: none; }
+#list a:hover { text-decoration: underline; }
+#list .flag { color: var(--muted); font-size: 11px; }
+/* Changed while the page was open: marked, and lit up once when it happened. */
+#list li.changed a { font-weight: 700; }
+#list li.changed.new { animation: lit 2s ease-out; }
+@keyframes lit { from { background: color-mix(in srgb, var(--fg) 25%, transparent); } }
+#msg { color: var(--muted); margin-top: 6px; white-space: pre-wrap; }
+#msg.err { color: #ff6464; }
+pre { font-size: 11px; overflow: auto; }

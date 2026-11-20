@@ -1,9 +1,17 @@
 {
   "name": "checkmk-bi-charts",
   "private": true,
-  "description": "The page's chart library; scripts/build_mkp.py copies it into the MKP.",
+  "description": "The page: its build (esbuild) and the chart library it bundles; scripts/build_mkp.py packs the built page into the MKP.",
   "license": "GPL-2.0-or-later",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build_page.mjs",
+    "test": "node --test tests/js/*.test.js"
+  },
   "dependencies": {
     "echarts": "6.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<!--
+  Charts of Checkmk BI aggregations for dashboards.
+
+  Shipped by the bi_charts MKP and served at /<site>/check_mk/local/bi_charts/index.html.
+  Embed it with the custom URL element (2.4) or the Embed URL widget (2.5), using
+  the site-relative URL local/bi_charts/index.html plus the query parameters below.
+  Draws with Apache ECharts (Apache-2.0), bundled into the page; its licenses lie beside it.
+
+  Query parameters (all optional):
+    view=<view>                 pie (default): the states of the aggregations
+                                rings:   the BI trees as rings, hosts and services
+                                         as pills around them
+                                treemap: the BI trees as nested rectangles
+                                tree:    the BI trees as a tree of nodes
+                                groups:  one donut per group
+                                bars:    one stacked bar per group
+                                tiles:   one hexagon per aggregation, the
+                                         worst first
+                                impact:  the hosts and services that are not
+                                         OK, by the aggregations they are in
+                                sankey:  the BI trees as flows from the
+                                         aggregations through their rules to
+                                         their hosts
+    group=<aggregation group>   repeatable, filters by BI aggregation group; the
+                                groups of the views groups and bars
+    name=<aggregation title>    repeatable, filters by aggregation title
+    by=group|pack               groups and bars: per aggregation group (default
+                                when group= is given) or per BI pack (otherwise)
+    depth=<levels>              rings, treemap, tree, sankey: rule levels shown,
+                                default 3
+    problems=1                  rings, treemap, tree, sankey: only the paths down
+                                to what is not OK
+    max=<count>                 views of the trees: most aggregations to load,
+                                default 40
+    top=<count>                 impact: most hosts and services shown, default 15
+    title=<text>                heading above the chart
+    refresh=<seconds>           reload interval, default 60, 0 disables
+    theme=dark|light            default: the Checkmk theme of the embedding
+                                page, dark when opened on its own
+    colors=<state>:<hex>,...    other colors, e.g. colors=ok:2e7d32,crit:c62828
+                                (states ok, warn, crit, unknown, pending)
+    muted=0                     OK in full color (default: paler than problems)
+    patterns=1                  a pattern per problem state besides its color
+    labels=0                    no names on the chart
+    legend=0                    hide the legend
+    list=0                      hide the list of non-OK aggregations
+    animation=0                 no animation
+    debug=1                     dump the raw REST response
+
+  Hovering (or tapping) shows details; clicking a state narrows the list to it,
+  clicking a node of a tree shows its path below the chart; hovering a legend row
+  fades everything of another state. An aggregation whose state changed while the
+  page was open is marked for ten minutes.
+
+  The aggregation states come from the REST API. The views of the trees also
+  load each aggregation's full tree from ajax_fetch_aggregation_data.py, the GUI
+  endpoint behind Checkmk's own BI visualization, because the REST API only
+  reports the nodes that have a problem. A tree is loaded again only when its
+  aggregation's answer from the REST API changed, or after ten minutes. Both are
+  called with the viewer's own GUI session, so every user sees only what they are
+  permitted to see.
+
+  Built from src/page/ (scripts/build_page.mjs): the stylesheet and the bundled
+  modules take the place of the two build markers below, so that the page is one
+  file, which a browser cannot have cached apart from its script.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BI aggregation states</title>
+<!-- build: style -->
+</head>
+<body>
+<h1 id="title" hidden></h1>
+<div id="wrap">
+  <div id="stage">
+    <div id="chart" role="img" aria-label="BI aggregation states"></div>
+    <svg id="arcs" aria-hidden="true"></svg>
+    <div id="center"><span id="total"></span><span id="sub">aggregations</span></div>
+  </div>
+  <table id="legend"></table>
+</div>
+<div id="detail"></div>
+<ul id="list"></ul>
+<div id="msg"></div>
+<pre id="debug" hidden></pre>
+<!-- build: script -->
+</body>
+</html>

@@ -3,7 +3,8 @@
 
     python3 tools/screenshots.py     # writes docs/screenshot*.png
 
-Serves the page with the stand-in for Checkmk's endpoints the unit tests use
+Builds the page (scripts/build_page.mjs; `npm ci` first) and serves it with
+the stand-in for Checkmk's endpoints the unit tests use
 (tests/unit/checkmk_stub.py), filled with made-up aggregations and trees, and
 shoots it in Chromium with Playwright (requirements-test.txt). The pictures
 say that they show sample data.
@@ -18,7 +19,9 @@ from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "tests" / "unit"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
+import build_mkp  # noqa: E402
 import checkmk_stub  # noqa: E402
 
 # Title -> (state, acknowledged, in downtime, BI group).
@@ -131,6 +134,7 @@ SHOTS: dict[str, tuple[list[tuple[str, str]], int, str | None]] = {
 
 
 def main() -> None:
+    build_mkp.build_page()
     checkmk_stub.tree = sample_tree
     stub = checkmk_stub.Stub(("127.0.0.1", 0), checkmk_stub.Handler)
     stub.aggregations = dict(SAMPLE)
