@@ -64,27 +64,27 @@ local/bi_charts/index.html?view=rings&depth=4&name=Payment%20API
 local/bi_charts/index.html?view=bars&group=WebApp&group=Storage&group=Network
 ```
 
-| Parameter | Meaning |
-|-----------|---------|
-| `view` | `pie` (default), `rings`, `treemap`, `tree`, `groups`, `bars`, `tiles`, `impact` or `sankey`, see below |
-| `group` | BI aggregation group to include, repeatable; the groups of `groups` and `bars` |
-| `name` | Aggregation title to include, repeatable |
-| `by` | `groups`, `bars`: `group` (default when `group` is given) or `pack` (BI pack, otherwise) |
-| `depth` | `rings`, `treemap`, `tree`, `sankey`: levels of rules shown, default 3 |
-| `problems=1` | `rings`, `treemap`, `tree`, `sankey`: only the paths down to what is not OK |
-| `max` | Views of the trees: most aggregations to load, default 40 |
-| `top` | `impact`: most hosts and services shown, default 15 |
-| `title` | Heading above the chart |
-| `refresh` | Reload interval in seconds, default 60, `0` disables |
-| `theme` | `dark` or `light`; default: the Checkmk theme of the embedding page |
-| `colors` | Other state colors, e.g. `ok:2e7d32,crit:c62828` (`ok`, `warn`, `crit`, `unknown`, `pending`) |
-| `muted=0` | OK in full color; by default it is paler than the problem states |
-| `patterns=1` | A pattern per problem state besides its color: stripes for WARN and CRIT (each its own way), dots for UNKNOWN |
-| `labels=0` | No names on the chart |
-| `legend=0` | Hide the legend |
-| `list=0` | Hide the list of non-OK aggregations |
-| `animation=0` | No animation |
-| `debug=1` | Show the raw REST API response |
+| Parameter     | Meaning                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------- |
+| `view`        | `pie` (default), `rings`, `treemap`, `tree`, `groups`, `bars`, `tiles`, `impact` or `sankey`, see below       |
+| `group`       | BI aggregation group to include, repeatable; the groups of `groups` and `bars`                                |
+| `name`        | Aggregation title to include, repeatable                                                                      |
+| `by`          | `groups`, `bars`: `group` (default when `group` is given) or `pack` (BI pack, otherwise)                      |
+| `depth`       | `rings`, `treemap`, `tree`, `sankey`: levels of rules shown, default 3                                        |
+| `problems=1`  | `rings`, `treemap`, `tree`, `sankey`: only the paths down to what is not OK                                   |
+| `max`         | Views of the trees: most aggregations to load, default 40                                                     |
+| `top`         | `impact`: most hosts and services shown, default 15                                                           |
+| `title`       | Heading above the chart                                                                                       |
+| `refresh`     | Reload interval in seconds, default 60, `0` disables                                                          |
+| `theme`       | `dark` or `light`; default: the Checkmk theme of the embedding page                                           |
+| `colors`      | Other state colors, e.g. `ok:2e7d32,crit:c62828` (`ok`, `warn`, `crit`, `unknown`, `pending`)                 |
+| `muted=0`     | OK in full color; by default it is paler than the problem states                                              |
+| `patterns=1`  | A pattern per problem state besides its color: stripes for WARN and CRIT (each its own way), dots for UNKNOWN |
+| `labels=0`    | No names on the chart                                                                                         |
+| `legend=0`    | Hide the legend                                                                                               |
+| `list=0`      | Hide the list of non-OK aggregations                                                                          |
+| `animation=0` | No animation                                                                                                  |
+| `debug=1`     | Show the raw REST API response                                                                                |
 
 Clicking a state (a slice, a donut's or bar's segment, a legend row) narrows
 the list to it; in `groups` and `bars` also to that group. Each entry of the
@@ -92,17 +92,17 @@ list links to the aggregation's BI view.
 
 ## Views
 
-| View | Shows | Best for |
-|------|-------|----------|
-| `pie` | One slice per state, its name and count along the ring where they fit, the number of aggregations in the middle | A small element, any number of aggregations |
-| `rings` | The BI trees as rings, hosts and services as pills around them | Following a problem from an aggregation down to a service |
-| `treemap` | The BI trees as nested rectangles, sized by hosts and services; a click zooms in | Many aggregations at once |
-| `tree` | The BI trees as a tree of nodes, folded below `depth`; a click opens or folds a node | Reading the structure of a few aggregations |
-| `groups` | One donut per group, its OK share in the middle | Comparing groups at a glance |
-| `bars` | One stacked bar per group, a segment per state | Comparing groups by the number of aggregations |
-| `tiles` | One hexagon per aggregation, the worst first, its name inside | Many aggregations at a glance, on a wall screen |
-| `impact` | One bar per host or service that is not OK, as long as the aggregations it is part of, a segment per state of those | What to fix first |
-| `sankey` | The BI trees as flows from the aggregations through their rules to their hosts; a host shared by several aggregations is one node | Seeing what aggregations share |
+| View      | Shows                                                                                                                             | Best for                                                  |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `pie`     | One slice per state, its name and count along the ring where they fit, the number of aggregations in the middle                   | A small element, any number of aggregations               |
+| `rings`   | The BI trees as rings, hosts and services as pills around them                                                                    | Following a problem from an aggregation down to a service |
+| `treemap` | The BI trees as nested rectangles, sized by hosts and services; a click zooms in                                                  | Many aggregations at once                                 |
+| `tree`    | The BI trees as a tree of nodes, folded below `depth`; a click opens or folds a node                                              | Reading the structure of a few aggregations               |
+| `groups`  | One donut per group, its OK share in the middle                                                                                   | Comparing groups at a glance                              |
+| `bars`    | One stacked bar per group, a segment per state                                                                                    | Comparing groups by the number of aggregations            |
+| `tiles`   | One hexagon per aggregation, the worst first, its name inside                                                                     | Many aggregations at a glance, on a wall screen           |
+| `impact`  | One bar per host or service that is not OK, as long as the aggregations it is part of, a segment per state of those               | What to fix first                                         |
+| `sankey`  | The BI trees as flows from the aggregations through their rules to their hosts; a host shared by several aggregations is one node | Seeing what aggregations share                            |
 
 **Rings:** the innermost ring holds the aggregations, in the same order as the
 pie. Each further ring, up to `depth`, is the next level of rules: the rules
@@ -212,10 +212,10 @@ same in the 2.4 and 2.5 sources.
 
 One package covers both versions because it avoids version-specific code:
 
-| Part  | Content | Why it works on 2.4 and 2.5 |
-|-------|---------|-----------------------------|
+| Part  | Content                                                                  | Why it works on 2.4 and 2.5                                                 |
+| ----- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
 | `web` | `htdocs/bi_charts/`: the page, ECharts bundled into it, and its licenses | Both serve `~/local/share/check_mk/web/htdocs` at `/<site>/check_mk/local/` |
-| `gui` | `dashboard/bi_charts` | Packaged dashboard in the 2.4 format, which 2.5 converts when loading |
+| `gui` | `dashboard/bi_charts`                                                    | Packaged dashboard in the 2.4 format, which 2.5 converts when loading       |
 
 Dashboard filters do not reach the page, because the embed element does not
 pass them on. Put the filter into the URL instead.
@@ -253,13 +253,13 @@ python3 -m pytest                  # unit tests, a few seconds
 python3 -m pytest tests/integration   # real Checkmk 2.4 and 2.5 in Docker
 ```
 
-| Suite | What it checks | Needs |
-|-------|----------------|-------|
-| `tests/js/` | what the views of the trees work out from the BI trees, without a browser | Node.js, `npm ci` |
-| `tests/unit/test_package.py` | package sources and the built MKP | Node.js, `npm ci` |
-| `tests/unit/test_page.py` | every view in a real browser, against a stand-in for the Checkmk endpoints | a browser, Node.js, `npm ci` |
-| `tests/integration/test_checkmk.py` | install, both endpoints with a session cookie, the dashboard and the page in a browser, on 2.4 and on 2.5 | Docker |
-| `tests/integration/test_update.py` | the same site updated from 2.4 to 2.5 | Docker |
+| Suite                               | What it checks                                                                                            | Needs                        |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `tests/js/`                         | what the views of the trees work out from the BI trees, without a browser                                 | Node.js, `npm ci`            |
+| `tests/unit/test_package.py`        | package sources and the built MKP                                                                         | Node.js, `npm ci`            |
+| `tests/unit/test_page.py`           | every view in a real browser, against a stand-in for the Checkmk endpoints                                | a browser, Node.js, `npm ci` |
+| `tests/integration/test_checkmk.py` | install, both endpoints with a session cookie, the dashboard and the page in a browser, on 2.4 and on 2.5 | Docker                       |
+| `tests/integration/test_update.py`  | the same site updated from 2.4 to 2.5                                                                     | Docker                       |
 
 The integration tests install Checkmk from its own packages: the newest patch
 release of 2.4 (Raw edition) and of 2.5 (Community edition), as listed in
@@ -279,13 +279,13 @@ instead, e.g. an older patch release.
 every tag and every Monday, so that a new Checkmk patch release is tested before
 anyone updates to it:
 
-| Job | What it does |
-|-----|--------------|
-| `unit` | the unit tests, and the MKP, kept as the run's artifact for 14 days |
-| `integration (Checkmk 2.4)` | `test_checkmk.py` on a 2.4 site |
-| `integration (Checkmk 2.5)` | `test_checkmk.py` on a 2.5 site |
-| `integration (update 2.4 to 2.5)` | `test_update.py` |
-| `release` | for a tag only, once all of the above passed: the MKP as a release |
+| Job                               | What it does                                                        |
+| --------------------------------- | ------------------------------------------------------------------- |
+| `unit`                            | the unit tests, and the MKP, kept as the run's artifact for 14 days |
+| `integration (Checkmk 2.4)`       | `test_checkmk.py` on a 2.4 site                                     |
+| `integration (Checkmk 2.5)`       | `test_checkmk.py` on a 2.5 site                                     |
+| `integration (update 2.4 to 2.5)` | `test_update.py`                                                    |
+| `release`                         | for a tag only, once all of the above passed: the MKP as a release  |
 
 Each integration job builds an image with only its versions
 (`BI_CHARTS_VERSIONS`, default `2.4 2.5`); a new Checkmk version is one more entry
@@ -339,16 +339,16 @@ bundles them from `main.js` with the parts of ECharts they import, and inlines t
 bundle and `style.css` into `index.html` at its build markers. The page is one file,
 so that a browser never pairs a cached script with a newer page after an update.
 
-| Module | What it holds |
-|--------|---------------|
-| `config.js` | the query parameters, checked first; the views' names |
-| `states.js`, `tree.js`, `changes.js` | the states, the BI trees and what the views work out from them, the changes of state; no browser globals (`tests/js`) |
-| `api.js`, `load.js` | the requests to Checkmk, and a load drawn or failed |
-| `ui.js` | what the page shows now (selection, fading, the chart items), shared by the modules |
-| `chart.js`, `paint.js`, `tips.js`, `arcs.js` | the chart and what every view shares: colors and patterns, tooltips, the bent names |
-| `views/*.js` | one module per view: its ECharts options |
-| `render.js`, `legend.js`, `list.js` | the drawing, the legend, the list and the detail line |
-| `main.js` | the entry point: theme, events, `window.biCharts`, refresh |
+| Module                                       | What it holds                                                                                                         |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `config.js`                                  | the query parameters, checked first; the views' names                                                                 |
+| `states.js`, `tree.js`, `changes.js`         | the states, the BI trees and what the views work out from them, the changes of state; no browser globals (`tests/js`) |
+| `api.js`, `load.js`                          | the requests to Checkmk, and a load drawn or failed                                                                   |
+| `ui.js`                                      | what the page shows now (selection, fading, the chart items), shared by the modules                                   |
+| `chart.js`, `paint.js`, `tips.js`, `arcs.js` | the chart and what every view shares: colors and patterns, tooltips, the bent names                                   |
+| `views/*.js`                                 | one module per view: its ECharts options                                                                              |
+| `render.js`, `legend.js`, `list.js`          | the drawing, the legend, the list and the detail line                                                                 |
+| `main.js`                                    | the entry point: theme, events, `window.biCharts`, refresh                                                            |
 
 The build is reproducible: identical sources give a byte-identical page and archive.
 
