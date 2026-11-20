@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 name = "checkmk-bi-charts"
 # The MKP's version too (scripts/build_mkp.py reads it from here); the release bot
 # writes it (tool.commitizen below).
-version = "0.2.0"
+version = "0.2.1"
 description = "Builds and tests the bi_charts MKP: charts of Checkmk BI aggregations for dashboards."
 readme = "README.md"
 license = "GPL-2.0-or-later"

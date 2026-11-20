@@ -40,8 +40,8 @@ taken from a live site.*
 As the site user:
 
 ```
-mkp add bi_charts-0.2.0.mkp
-mkp enable bi_charts 0.2.0
+mkp add bi_charts-0.2.1.mkp
+mkp enable bi_charts 0.2.1
 ```
 
 The package then provides:
