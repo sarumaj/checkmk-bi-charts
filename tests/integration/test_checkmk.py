@@ -158,9 +158,10 @@ def test_page_draws_the_trees_in_a_browser(page: Page, site: Site, view: str) ->
     page.goto(site.url + f"local/bi_charts/index.html?view={view}&depth=5")
     expect(page.locator("#msg.err")).to_have_count(0)
     assert [i["path"] for i in _items(page, "aggregation")] == [AGGREGATION]
-    # At least one rule below the aggregation, and the host's services below.
+    # At least one rule below the aggregation, and the host's services below; the sankey
+    # ends in the hosts, its services summed into them.
     assert _items(page, "rule")
-    leaves = _items(page, "service") + [i for i in page.evaluate("biCharts.items()") if i["kind"] == "host"]
+    leaves = _items(page, "host" if view == "sankey" else "service")
     assert any(MONITORED_HOST in i["path"] for i in leaves)
     # Hovering the aggregation tells its rule.
     item = _items(page, "aggregation")[0]
