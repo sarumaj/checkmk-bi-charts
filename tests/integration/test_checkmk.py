@@ -61,10 +61,11 @@ def test_page_is_served(site: Site) -> None:
     response = gui.get(site.url + "local/bi_charts/index.html")
     assert response.status_code == 200
     assert "<title>BI aggregation states</title>" in response.text
-    # The chart library beside it, as JavaScript.
-    response = gui.get(site.url + "local/bi_charts/echarts.min.js")
+    # The script inline, the chart library bundled into it; its licenses beside it.
+    assert "<script>" in response.text
+    response = gui.get(site.url + "local/bi_charts/NOTICE-echarts.txt")
     assert response.status_code == 200
-    assert "javascript" in response.headers["Content-Type"]
+    assert "Apache ECharts" in response.text
 
 
 def test_state_endpoint_accepts_the_session_cookie(site: Site) -> None:

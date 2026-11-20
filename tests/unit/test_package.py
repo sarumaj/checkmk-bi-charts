@@ -3,6 +3,7 @@
 import ast
 import io
 import json
+import re
 import tarfile
 from pathlib import Path
 
@@ -31,7 +32,7 @@ def test_dashboard_embeds_the_page_site_relative() -> None:
     dashlets = dashboards["bi_charts"]["dashlets"]
     # A site-relative URL keeps the package independent of the site name.
     assert [(d["type"], d["url"]) for d in dashlets] == [("url", "local/bi_charts/index.html")]
-    assert (ROOT / "src/web/htdocs/bi_charts/index.html").is_file()
+    assert (ROOT / "src/page/index.html").is_file()
 
 
 @pytest.mark.parametrize(
@@ -41,7 +42,6 @@ def test_dashboard_embeds_the_page_site_relative() -> None:
             "web",
             [
                 "htdocs/bi_charts/index.html",
-                "htdocs/bi_charts/echarts.min.js",
                 "htdocs/bi_charts/LICENSE-echarts.txt",
                 "htdocs/bi_charts/NOTICE-echarts.txt",
                 "htdocs/bi_charts/LICENSE-zrender.txt",
@@ -72,14 +72,17 @@ def test_build_is_reproducible() -> None:
     assert build_mkp.build().read_bytes() == build_mkp.build().read_bytes()
 
 
-def test_mkp_ships_the_chart_library_with_its_licenses() -> None:
+def test_mkp_ships_the_built_page_with_the_licenses_of_its_library() -> None:
     with tarfile.open(build_mkp.build()) as mkp:
         with tarfile.open(fileobj=io.BytesIO(mkp.extractfile("web.tar").read())) as web:
-            library = web.extractfile("htdocs/bi_charts/echarts.min.js").read()
+            page = web.extractfile("htdocs/bi_charts/index.html").read().decode()
             notice = web.extractfile("htdocs/bi_charts/NOTICE-echarts.txt").read()
-    assert library == (ROOT / "node_modules/echarts/dist/echarts.min.js").read_bytes()
+    assert page == build_mkp.PAGE.read_text()
     assert b"Apache ECharts" in notice
-    # The page loads the copy beside it, nothing from elsewhere.
-    page = (ROOT / "src/web/htdocs/bi_charts/index.html").read_text()
-    assert '<script src="echarts.min.js"></script>' in page
-    assert "https://" not in page.split("<script>")[0].split("<style>")[0]
+    # One file: the stylesheet and the script inline (the build markers replaced),
+    # nothing loaded from beside it or from elsewhere.
+    assert "<!-- build:" not in page
+    assert page.count("<script>") == 1 and page.count("<style>") == 1
+    assert not re.search(r"<script[^>]*\ssrc=|<link\b", page)
+    # The bundle holds ECharts: its chart types the views draw with.
+    assert "sunburst" in page and "sankey" in page
