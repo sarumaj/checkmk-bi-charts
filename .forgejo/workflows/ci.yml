@@ -62,12 +62,19 @@ jobs:
       - name: Check the tested Checkmk versions
         run: .venv/bin/python tests/integration/packages.py --check 2.4 2.5
 
-      # The modules of the page that need no browser (tests/js).
+      # The modules of the page that need no browser (tests/js), as npm test runs them,
+      # and as JUnit for the report below (Node.js 20.10 or later).
       - name: Tests of the page's modules
-        run: npm test
+        id: node-tests
+        run: >-
+          node --version &&
+          node --test --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=junit --test-reporter-destination=/tmp/node.xml tests/js/*.test.js
 
+      # Also when the page's modules failed, so that the report has both.
       - name: Unit tests
         id: tests
+        if: ${{ !cancelled() && steps.node-tests.outcome != 'skipped' }}
         run: .venv/bin/python -m pytest --junitxml=/tmp/pytest.xml
 
       # The results as one comment on the pull request (dawid/ci-actions), also when
@@ -76,7 +83,7 @@ jobs:
         if: always() && steps.tests.outcome != 'skipped'
         uses: https://git.ciepiela.org/dawid/ci-actions/test-report@main
         with:
-          junit: /tmp/pytest.xml
+          junit: /tmp/node.xml /tmp/pytest.xml
 
       - name: Build the MKP
         run: .venv/bin/build-mkp
