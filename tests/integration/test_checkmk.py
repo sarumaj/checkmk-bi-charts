@@ -61,8 +61,11 @@ def test_page_is_served(site: Site) -> None:
     response = gui.get(site.url + "local/bi_charts/index.html")
     assert response.status_code == 200
     assert "<title>BI aggregation states</title>" in response.text
-    # The script inline, the chart library bundled into it; its licenses beside it.
+    # The script inline; the chart library and its licenses beside it.
     assert "<script>" in response.text
+    response = gui.get(site.url + "local/bi_charts/echarts.min.js")
+    assert response.status_code == 200
+    assert "echarts" in response.text
     response = gui.get(site.url + "local/bi_charts/NOTICE-echarts.txt")
     assert response.status_code == 200
     assert "Apache ECharts" in response.text

@@ -13,6 +13,8 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).parent.parent.parent
 # The page as the MKP ships it, built by the fixture stub (scripts/build_page.mjs; npm ci).
 PAGE = ROOT / "build/bi_charts/index.html"
+# The chart library the MKP ships beside it, as npm ci installs it.
+ECHARTS = ROOT / "node_modules/echarts/dist/echarts.min.js"
 
 # Aggregation title -> (state, acknowledged, in downtime, BI group).
 AGGREGATIONS: dict[str, tuple[int, bool, bool, str]] = {
@@ -94,6 +96,8 @@ class Handler(BaseHTTPRequestHandler):
         path = url.path.removeprefix("/stub/check_mk/")
         if path == "local/bi_charts/index.html":
             self._send(200, "text/html", PAGE.read_bytes())
+        elif path == "local/bi_charts/echarts.min.js":
+            self._send(200, "text/javascript", ECHARTS.read_bytes())
         elif path == "dashboard.py":
             # Embedding page, as Checkmk renders it: themed <body>, widget in an iframe.
             html = (

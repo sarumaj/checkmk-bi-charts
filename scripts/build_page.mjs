@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Builds the page from src/page/ into build/bi_charts/index.html: the modules from
-// main.js bundled with the parts of ECharts they import (esbuild), and the stylesheet,
-// both inlined into the template at its build markers. One file: a browser cannot
-// pair a cached script with a newer page after an update of the package.
+// main.js bundled (esbuild), not minified, so that the package's own code reads as
+// written, and the stylesheet, both inlined into the template at its build markers.
+// ECharts is not bundled: the page loads its release's echarts.min.js, which the MKP
+// ships beside it unchanged, with ECharts' version in the URL, so that a browser
+// cannot pair a cached library with a newer page after an update of the package.
 //
 //     npm run build        # or: node scripts/build_page.mjs
 //
@@ -17,12 +19,15 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const page = join(root, "src/page");
 const target = join(root, "build/bi_charts/index.html");
 
+const echarts = JSON.parse(readFileSync(join(root, "node_modules/echarts/package.json"), "utf8")).version;
+
 const bundle = await build({
   entryPoints: [join(page, "main.js")],
   bundle: true,
   format: "iife",
-  minify: true,
-  // The license texts ship as files beside the page (scripts/build_mkp.py).
+  // Checkmk's reviewers read the package: the code as written, names and all
+  // (esbuild keeps no comments; the sources with theirs are in src/page/).
+  minify: false,
   legalComments: "none",
   // Checkmk's supported browsers are evergreen; this keeps the code as written.
   target: "es2022",
@@ -30,12 +35,18 @@ const bundle = await build({
   logLevel: "warning",
 });
 const script = bundle.outputFiles[0].text;
+// ECharts comes from echarts.min.js alone: a module importing it would bundle a copy.
+if (script.includes("node_modules/echarts")) throw new Error("The bundle contains ECharts; use globalThis.echarts");
 // An inline script ends at the first "</script", wherever it stands.
 if (/<\/script/i.test(script)) throw new Error("The bundle contains </script, which would end the inline script");
 
 const template = readFileSync(join(page, "index.html"), "utf8");
 const style = readFileSync(join(page, "style.css"), "utf8");
-const markers = { "<!-- build: style -->": `<style>\n${style}</style>`, "<!-- build: script -->": `<script>${script}</script>` };
+const markers = {
+  "<!-- build: style -->": `<style>\n${style}</style>`,
+  "<!-- build: echarts -->": `<script src="echarts.min.js?v=${echarts}"></script>`,
+  "<!-- build: script -->": `<script>\n${script}</script>`,
+};
 let html = template;
 for (const [marker, content] of Object.entries(markers)) {
   if (html.split(marker).length !== 2) throw new Error(`src/page/index.html needs the marker ${marker} once`);
