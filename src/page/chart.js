@@ -1,14 +1,10 @@
-// The chart, and what every view's options share. Only the parts of ECharts the
-// views use go into the page.
-import { BarChart, CustomChart, PieChart, SankeyChart, SunburstChart, TreeChart, TreemapChart } from "echarts/charts";
-import { AriaComponent, GridComponent, TitleComponent, TooltipComponent } from "echarts/components";
-import * as echarts from "echarts/core";
-import { SVGRenderer } from "echarts/renderers";
+// The chart, and what every view's options share. ECharts is its release's own
+// echarts.min.js beside the page, loaded before the page's script, unchanged, so that
+// a reviewer can compare it with the release: it is not bundled into the page.
 import { animate } from "./config.js";
 import { $, css } from "./dom.js";
 
-echarts.use([BarChart, CustomChart, PieChart, SankeyChart, SunburstChart, TreeChart, TreemapChart,
-             AriaComponent, GridComponent, TitleComponent, TooltipComponent, SVGRenderer]);
+const { echarts } = globalThis;
 
 // Created by initChart once the page has its theme and view, which size the chart.
 export let chart = null;

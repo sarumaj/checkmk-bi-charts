@@ -212,10 +212,10 @@ same in the 2.4 and 2.5 sources.
 
 One package covers both versions because it avoids version-specific code:
 
-| Part  | Content                                                                  | Why it works on 2.4 and 2.5                                                 |
-| ----- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| `web` | `htdocs/bi_charts/`: the page, ECharts bundled into it, and its licenses | Both serve `~/local/share/check_mk/web/htdocs` at `/<site>/check_mk/local/` |
-| `gui` | `dashboard/bi_charts`                                                    | Packaged dashboard in the 2.4 format, which 2.5 converts when loading       |
+| Part  | Content                                                                         | Why it works on 2.4 and 2.5                                                 |
+| ----- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `web` | `htdocs/bi_charts/`: the page, ECharts' own `echarts.min.js`, and its licenses  | Both serve `~/local/share/check_mk/web/htdocs` at `/<site>/check_mk/local/` |
+| `gui` | `dashboard/bi_charts`                                                           | Packaged dashboard in the 2.4 format, which 2.5 converts when loading       |
 
 Dashboard filters do not reach the page, because the embed element does not
 pass them on. Put the filter into the URL instead.
@@ -243,7 +243,7 @@ pass them on. Put the filter into the URL instead.
 ## Tests
 
 ```
-npm ci                             # esbuild and the chart library the page bundles
+npm ci                             # esbuild and the chart library the page loads
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e '.[test]'           # the project, with build-mkp and the test tools
 playwright install chromium        # or: pytest --browser-channel chrome
@@ -335,9 +335,19 @@ The project is installed editable, so that `build-mkp` reads `src/`,
 
 The page's sources are ES modules in `src/page/`, and `build-mkp` builds the page
 from them first (`scripts/build_page.mjs`): [esbuild](https://esbuild.github.io/)
-bundles them from `main.js` with the parts of ECharts they import, and inlines the
-bundle and `style.css` into `index.html` at its build markers. The page is one file,
-so that a browser never pairs a cached script with a newer page after an update.
+bundles them from `main.js`, not minified, and inlines the bundle and `style.css` into
+`index.html` at its build markers. ECharts is not bundled: the page loads the
+release's own `dist/echarts.min.js`, which the package ships beside it unchanged, with
+ECharts' version in its URL, so that a browser never pairs a cached library with a
+newer page after an update.
+
+**For reviewers** (the Checkmk Exchange): the package's own code is the inline script
+of `index.html`, as written apart from its comments (each module starts with a
+`// src/page/<module>.js` line; the commented sources are in `src/page/`).
+`echarts.min.js` is Apache ECharts' release file, byte for byte: compare it with
+`dist/echarts.min.js` of the npm package `echarts` in the version `package-lock.json`
+pins (`npm pack echarts@<version>`), or with the release on
+[GitHub](https://github.com/apache/echarts/releases).
 
 | Module                                       | What it holds                                                                                                         |
 | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
@@ -356,10 +366,10 @@ The build is reproducible: identical sources give a byte-identical page and arch
 
 GPL-2.0-or-later, see [LICENSE](LICENSE) (the text of version 2).
 
-The page includes the parts of [Apache ECharts](https://echarts.apache.org/)
-it uses, under the Apache License 2.0, and of zrender, which ECharts builds on,
-under the BSD 3-Clause license (and tslib's helpers, 0BSD); their license texts
-and notice ship beside the page
+The package includes [Apache ECharts](https://echarts.apache.org/)
+(`echarts.min.js`), under the Apache License 2.0, with zrender, which ECharts
+builds on, under the BSD 3-Clause license (and tslib's helpers, 0BSD); their license
+texts and notice ship beside the page
 (`LICENSE-echarts.txt`, `NOTICE-echarts.txt`, `LICENSE-zrender.txt`). The
 Apache License 2.0 is compatible with version 3 of the GPL, not with version 2
 alone, which is why the package is GPL-2.0-or-later.

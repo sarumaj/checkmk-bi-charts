@@ -14,7 +14,8 @@ which Checkmk resolves itself, so the same archive installs on 2.4 and 2.5 even
 though the directories differ between the two.
 
 The page is built first (scripts/build_page.mjs, Node.js and ``npm ci``): its
-modules under src/page/ bundled with ECharts into one file under build/.
+modules under src/page/ bundled, not minified, into one file under build/. ECharts
+ships beside it as its release's echarts.min.js, unchanged.
 
 Building here instead of with ``mkp package`` needs no Checkmk site and gives a
 byte-identical archive for identical sources.
@@ -44,6 +45,7 @@ VERSION: str = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["
 FILES: dict[str, list[str]] = {
     "web": [
         "htdocs/bi_charts/index.html",
+        "htdocs/bi_charts/echarts.min.js",
         "htdocs/bi_charts/LICENSE-echarts.txt",
         "htdocs/bi_charts/NOTICE-echarts.txt",
         "htdocs/bi_charts/LICENSE-zrender.txt",
@@ -51,13 +53,15 @@ FILES: dict[str, list[str]] = {
     "gui": ["dashboard/bi_charts"],
 }
 
-# The files from elsewhere than src/: the built page (build_page), and the licenses
-# of the chart library it bundles (Apache-2.0; zrender, which it bundles, BSD), in
-# the version package-lock.json pins: `npm ci` puts it into node_modules.
+# The files from elsewhere than src/: the built page (build_page), and the chart
+# library's own echarts.min.js with its licenses (Apache-2.0; zrender, which it
+# bundles, BSD), in the version package-lock.json pins: `npm ci` puts it into
+# node_modules.
 PAGE = ROOT / "build/bi_charts/index.html"
 MODULES = ROOT / "node_modules"
 OTHER_SOURCES: dict[str, Path] = {
     "web/htdocs/bi_charts/index.html": PAGE,
+    "web/htdocs/bi_charts/echarts.min.js": MODULES / "echarts/dist/echarts.min.js",
     "web/htdocs/bi_charts/LICENSE-echarts.txt": MODULES / "echarts/LICENSE",
     "web/htdocs/bi_charts/NOTICE-echarts.txt": MODULES / "echarts/NOTICE",
     "web/htdocs/bi_charts/LICENSE-zrender.txt": MODULES / "zrender/LICENSE",

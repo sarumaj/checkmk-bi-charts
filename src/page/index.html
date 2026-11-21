@@ -5,7 +5,8 @@
   Shipped by the bi_charts MKP and served at /<site>/check_mk/local/bi_charts/index.html.
   Embed it with the custom URL element (2.4) or the Embed URL widget (2.5), using
   the site-relative URL local/bi_charts/index.html plus the query parameters below.
-  Draws with Apache ECharts (Apache-2.0), bundled into the page; its licenses lie beside it.
+  Draws with Apache ECharts (Apache-2.0): its release's echarts.min.js, unchanged, and its
+  licenses lie beside the page.
 
   Query parameters (all optional):
     view=<view>                 pie (default): the states of the aggregations
@@ -61,9 +62,9 @@
   called with the viewer's own GUI session, so every user sees only what they are
   permitted to see.
 
-  Built from src/page/ (scripts/build_page.mjs): the stylesheet and the bundled
-  modules take the place of the two build markers below, so that the page is one
-  file, which a browser cannot have cached apart from its script.
+  Built from src/page/ (scripts/build_page.mjs): the stylesheet, ECharts' script
+  tag (with its version, against a cached older library) and the bundled modules,
+  not minified, take the place of the three build markers below.
 -->
 <html lang="en">
 <head>
@@ -85,6 +86,7 @@
 <ul id="list"></ul>
 <div id="msg"></div>
 <pre id="debug" hidden></pre>
+<!-- build: echarts -->
 <!-- build: script -->
 </body>
 </html>
