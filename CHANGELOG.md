@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file. The release bot
 writes each version's section from the commits (Conventional Commits) and the hand-written
 Unreleased section.
 
+## 0.2.2 - 2026-11-21
+
+### Fixed
+
+- **page:** the page's own code not minified, ECharts beside it as its release's echarts.min.js
+
 ## 0.2.1 - 2026-11-20
 
 ### Changed
