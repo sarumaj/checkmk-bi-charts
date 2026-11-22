@@ -209,7 +209,11 @@ def test_page_draws_the_impact_in_a_browser(page: Page, site: Site) -> None:
 
 def test_dashboard_shows_the_widget_in_a_browser(page: Page, site: Site) -> None:
     _log_in(page, site)
-    page.goto(site.url + "dashboard.py?name=bi_charts")
+    # Not until the page's load event: Checkmk 2.5's dashboard did not fire it within
+    # goto's 30 seconds on a busy CI host (twice on 2026-11-22), while its widget is
+    # what the test is about. The widget is waited for instead, as long as the
+    # chart's own waits.
+    page.goto(site.url + "dashboard.py?name=bi_charts", wait_until="domcontentloaded")
     widget = page.frame_locator('iframe[src*="local/bi_charts/index.html"]')
-    expect(widget.locator("#total")).to_have_text("1")
+    expect(widget.locator("#total")).to_have_text("1", timeout=60_000)
     expect(widget.locator("#msg.err")).to_have_count(0)
